@@ -1,0 +1,9 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+opencv-python>=4.9.0
+sounddevice>=0.4.6
+numpy>=1.26.0
+scipy>=1.13.0
+google-genai>=1.0.0
+elevenlabs>=1.0.0
+python-dotenv>=1.0.0
