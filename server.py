@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -48,8 +49,102 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create the FastAPI application object. This is the "app" that uvicorn runs.
-app = FastAPI(title="Lecture Capture System")
+# ---------------------------------------------------------------------------
+# Lifespan — startup and shutdown logic
+# ---------------------------------------------------------------------------
+# The modern FastAPI way to run code at startup and shutdown is a "lifespan"
+# async context manager. Think of it like a with-block that wraps the entire
+# server lifetime:
+#
+#   with lifespan(app):
+#       run the server...       ← the yield is where the server runs
+#
+# Everything BEFORE yield runs once at startup (before any requests are handled).
+# Everything AFTER yield runs once at shutdown (after the last request is done).
+# This replaces the old @app.on_event("startup") / @app.on_event("shutdown")
+# decorators which are deprecated in modern FastAPI.
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manage the full lifetime of the server: startup setup and shutdown cleanup.
+
+    On startup:
+      - Validate API keys exist in the environment
+      - Create the Gemini client (authenticated, ready to call)
+      - Capture a reference to the running event loop (needed by background threads)
+      - Start the camera capture thread
+      - Start the audio capture thread
+
+    On shutdown (triggered by Ctrl+C):
+      - Save the accumulated whiteboard notes to a timestamped .md file
+      - Save the accumulated transcript to a timestamped .md file
+    """
+    # --- STARTUP ---
+    global gemini_client, _main_loop
+
+    # Validate that both API keys are present before starting anything.
+    # It's better to fail loudly here than to silently fail on the first
+    # API call 5 seconds into the session.
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY not set. Add it to your .env file and restart."
+        )
+
+    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+    if not elevenlabs_key:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY not set. Add it to your .env file and restart."
+        )
+
+    # Create the Gemini client. This does NOT make an API call yet — it just
+    # sets up the authenticated client object ready for use.
+    gemini_client = genai.Client(api_key=gemini_key)
+
+    # Capture a reference to the currently running asyncio event loop.
+    # asyncio.get_running_loop() only works inside an async function, which
+    # is why we capture it here at startup and store it as a global.
+    # Background threads (camera, audio) will use this in broadcast_sync()
+    # to safely hand work back to the async main thread.
+    _main_loop = asyncio.get_running_loop()
+
+    # Start the camera and audio loops as daemon threads.
+    # daemon=True means these threads automatically die when the main program
+    # exits — we don't need to manually stop them.
+    start_camera_loop(on_frame)
+    start_audio_loop(on_audio)
+
+    logger.info("Lecture Capture System started. Open http://localhost:8000")
+
+    # --- SERVER RUNS HERE ---
+    # yield hands control back to FastAPI. The server is now live and
+    # accepting connections. This line "pauses" until shutdown is triggered.
+    yield
+
+    # --- SHUTDOWN (everything below runs after Ctrl+C) ---
+    # Create a timestamp string for the filenames.
+    # strftime() formats a datetime as a string: "2026-03-07_143022"
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+    if whiteboard_notes.strip():
+        notes_path = Path(f"notes_{timestamp}.md")
+        notes_path.write_text(whiteboard_notes, encoding="utf-8")
+        logger.info("Whiteboard notes saved to %s", notes_path)
+
+    if transcript.strip():
+        transcript_path = Path(f"transcript_{timestamp}.md")
+        transcript_path.write_text(transcript, encoding="utf-8")
+        logger.info("Transcript saved to %s", transcript_path)
+
+    if not whiteboard_notes.strip() and not transcript.strip():
+        logger.info("Nothing to save — session was empty.")
+
+
+# Create the FastAPI application object, wiring in our lifespan manager.
+# lifespan=lifespan tells FastAPI: "use this function to handle startup
+# and shutdown" instead of the old @app.on_event decorators.
+app = FastAPI(title="Lecture Capture System", lifespan=lifespan)
 
 # Tell FastAPI to serve files from the "static" folder.
 # Path(__file__).parent finds the directory this script lives in,
@@ -294,88 +389,6 @@ async def websocket_endpoint(websocket: WebSocket):
         # whether the disconnection was clean or not.
         connected_clients.discard(websocket)
         logger.info("Client disconnected (%d remaining)", len(connected_clients))
-
-
-# ---------------------------------------------------------------------------
-# Startup and shutdown hooks
-# ---------------------------------------------------------------------------
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Run once when the server starts. Initializes API clients and starts threads.
-
-    on_event("startup") is FastAPI's way of running code before the server
-    begins accepting requests. We use it to:
-      - Create the Gemini client (which authenticates with Google)
-      - Save a reference to the running event loop (for broadcast_sync)
-      - Start the camera and audio background threads
-    """
-    global gemini_client, _main_loop
-
-    # Validate that the Gemini key is present before trying to use it.
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY not set. Add it to your .env file and restart."
-        )
-
-    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-    if not elevenlabs_key:
-        raise RuntimeError(
-            "ELEVENLABS_API_KEY not set. Add it to your .env file and restart."
-        )
-
-    # Create the Gemini client. This does NOT make an API call yet — it just
-    # sets up the authenticated client object ready for use.
-    gemini_client = genai.Client(api_key=gemini_key)
-
-    # Get a reference to the currently running asyncio event loop.
-    # asyncio.get_running_loop() only works inside an async function,
-    # which is why we capture it here at startup and store it globally.
-    # Background threads will use this reference in broadcast_sync().
-    _main_loop = asyncio.get_running_loop()
-
-    # Start the camera and audio loops as background daemon threads.
-    # "daemon=True" (set inside capture.py) means these threads will
-    # automatically stop when the main program exits — we don't have to
-    # manually shut them down.
-    start_camera_loop(on_frame)
-    start_audio_loop(on_audio)
-
-    logger.info("Lecture Capture System started. Open http://localhost:8000")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Run once when the server shuts down (Ctrl+C). Saves session files.
-
-    We save both the whiteboard notes and the full transcript to timestamped
-    Markdown files. This means the lecturer has a permanent record of each
-    session even after the server stops.
-
-    File naming: notes_2026-03-07_143022.md (YYYY-MM-DD_HHMMSS format)
-    """
-    # Create a timestamp string for the filename.
-    # datetime.now() gets the current local time.
-    # strftime() formats it as a string: "2026-03-07_143022"
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
-    # Save whiteboard notes.
-    if whiteboard_notes.strip():
-        notes_path = Path(f"notes_{timestamp}.md")
-        notes_path.write_text(whiteboard_notes, encoding="utf-8")
-        logger.info("Whiteboard notes saved to %s", notes_path)
-
-    # Save transcript.
-    if transcript.strip():
-        transcript_path = Path(f"transcript_{timestamp}.md")
-        transcript_path.write_text(transcript, encoding="utf-8")
-        logger.info("Transcript saved to %s", transcript_path)
-
-    if not whiteboard_notes.strip() and not transcript.strip():
-        logger.info("Nothing to save — session was empty.")
 
 
 # ---------------------------------------------------------------------------
