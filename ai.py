@@ -7,6 +7,7 @@ That separation makes each piece easier to test and understand on its own.
 """
 
 import io
+import json
 import os
 
 import cv2
@@ -22,7 +23,7 @@ from elevenlabs.client import ElevenLabs
 # Named constants make the code self-documenting. If we need to change these
 # values later, there is one place to do it instead of hunting through the code.
 
-JPEG_QUALITY = 85
+JPEG_QUALITY = 100
 # JPEG quality on a 0–100 scale. 85 gives a good balance between file size
 # (smaller = faster API upload) and image clarity (higher = Gemini reads text better).
 # Below ~70 the compression artifacts can make handwritten text hard to read.
@@ -84,87 +85,129 @@ def encode_frame_as_jpeg(frame: np.ndarray) -> bytes:
 def analyze_whiteboard(
     gemini_client: genai.Client,
     frame: np.ndarray,
-    previous_notes: str = "",
+    current_notes: str = "",
 ) -> str:
     """
-    Send a whiteboard camera frame to Gemini and get back only the NEW content.
+    Send a whiteboard camera frame + the current grid state to Gemini and get
+    back an updated JSON grid that preserves the 2D spatial layout of the board.
 
-    This function is the core of the whiteboard pipeline. It is called every
-    5 seconds by the camera loop in server.py.
+    OUTPUT FORMAT — a JSON string with this shape:
+        {
+          "cells": [
+            { "row": 1, "col": 1, "colSpan": 3, "content": "## Title" },
+            { "row": 2, "col": 1,                "content": "$F = ma$" },
+            { "row": 2, "col": 2,                "content": "$E = mc^2$" }
+          ]
+        }
 
-    How the "incremental" trick works:
-        We pass Gemini the FULL history of notes already captured. We then ask
-        it to return ONLY what is new or changed. This way we never duplicate
-        content — each call returns just the delta, which the server appends.
+    The whiteboard is divided into a 3-column grid (left / center / right thirds)
+    and as many rows as needed (top to bottom). Each piece of content is placed
+    in the cell that matches where it physically appears on the board.
+
+    Why JSON grid instead of Markdown?
+        Markdown is linear — it can only express top-to-bottom order. Whiteboards
+        are 2D. A professor might write two equations side by side, or put a
+        definition on the left and an example on the right. A JSON grid lets us
+        preserve that spatial relationship and render it faithfully in the browser
+        using CSS grid layout.
+
+    Merge strategy (same four rules as before):
+        1. ADD   — new content visible on the board, not yet in the grid.
+        2. UPDATE — cells whose content changed (e.g., "5+3" → "5+3=8").
+        3. PRESERVE — cells not currently visible (professor may be blocking them).
+        4. REMOVE — cells only if the content was clearly erased (clean whiteboard
+                    where it used to be, not just a person standing in front).
 
     Args:
-        gemini_client: An authenticated genai.Client instance. Created once at
-                       server startup and reused for every call (more efficient
-                       than creating a new client each time).
-        frame:         The current camera frame as a numpy array (BGR, from OpenCV).
-        previous_notes: Everything Gemini has returned so far, joined together.
-                        Empty string on the very first call.
+        gemini_client:  An authenticated genai.Client instance, created at startup.
+        frame:          Current camera frame as a numpy array (BGR, from OpenCV).
+        current_notes:  The JSON grid string from the previous capture, or "" on
+                        the first call.
 
     Returns:
-        A Markdown+LaTeX string containing only new or changed whiteboard content.
-        Returns an empty string if nothing new is visible.
+        A JSON string (the updated grid). Returns current_notes unchanged if
+        Gemini's response is missing or cannot be parsed as valid JSON.
     """
     # Step 1: Compress the raw pixel frame into JPEG bytes for the API call.
     jpeg_bytes = encode_frame_as_jpeg(frame)
 
-    # Step 2: Build the context block — this is the "memory" we give Gemini.
-    # On the first call, there are no previous notes, so we ask for everything.
-    # On subsequent calls, we tell Gemini what it already found so it only
-    # returns what is genuinely new.
-    if previous_notes.strip():
-        context_block = (
-            f"Previously captured whiteboard content (already shown to students):\n"
-            f"---\n{previous_notes}\n---\n\n"
-            "Look at the new whiteboard image. "
-            "Return ONLY content that is NEW or has CHANGED since the previous capture. "
-            "Do NOT repeat content that is already in the previous notes. "
-            "If nothing new is visible, return an empty string."
-        )
+    # Step 2: Build the prompt.
+    # We pass the existing grid JSON directly in the prompt so Gemini knows
+    # what's already been captured and can perform an intelligent merge.
+    if current_notes:
+        grid_section = f"CURRENT GRID (JSON from previous capture):\n{current_notes}\n\n"
     else:
-        context_block = (
-            "This is the first whiteboard capture. "
-            "Extract ALL visible content from the whiteboard."
-        )
+        grid_section = "CURRENT GRID: (none yet — this is the first capture)\n\n"
 
-    # Step 3: Build the full prompt — instructions for how to format the output.
-    # We want Markdown for structure (headers, bullets) and LaTeX for math
-    # (so the browser can render equations with KaTeX).
     prompt = (
-        f"{context_block}\n\n"
-        "Format your response as Markdown with LaTeX math:\n"
+        "You are capturing a live whiteboard lecture. Your job is to maintain a "
+        "2D spatial grid of the whiteboard content so students see the same layout "
+        "the professor wrote.\n\n"
+        + grid_section
+        + "Look at the whiteboard image and return an UPDATED JSON grid.\n\n"
+        "GRID SYSTEM:\n"
+        "- The board has up to 3 columns: col 1 = left third, col 2 = center third, "
+        "col 3 = right third.\n"
+        "- Rows go top to bottom starting at row 1. Use as many rows as needed.\n"
+        "- Use colSpan (1, 2, or 3) when content spans multiple column zones. "
+        "A full-width title gets colSpan 3. Content spanning left+center gets colSpan 2.\n\n"
+        "MERGE RULES:\n"
+        "1. ADD new content visible on the board that is not yet in the grid.\n"
+        "2. UPDATE cells whose content changed "
+        "(e.g., '5 + 3' is now '5 + 3 = 8' — edit that cell in-place).\n"
+        "3. PRESERVE cells not currently visible — the professor may be blocking them.\n"
+        "4. REMOVE cells only if you can clearly see the content was erased "
+        "(clean whiteboard where it was, not just someone standing in front).\n\n"
+        "TRANSCRIPTION RULE — stenographer, not narrator:\n"
+        "- Output content exactly as written. Never describe or narrate.\n"
+        "- WRONG: 'There appears to be an equation: 5 + 3'\n"
+        "- RIGHT:  '$5 + 3$'\n"
+        "- Never use 'there appears to be', 'the whiteboard shows', 'I can see', etc.\n\n"
+        "FORMAT RULES for cell content:\n"
         "- Use ## for section headers\n"
         "- Use bullet points, numbered lists, and code blocks where appropriate\n"
-        "- For ALL mathematical expressions, equations, and formulas use LaTeX delimiters:\n"
-        "  - Inline math: $...$ (e.g., $F = ma$)\n"
-        "  - Display math (standalone equations): $$...$$ on its own line\n"
-        "- Do NOT write math as plain text without delimiters\n"
-        "- Use only $ and $$ delimiters — not \\( \\) or \\[ \\]\n"
-        "- Return ONLY the Markdown+LaTeX content, no preamble or explanation."
+        "- Convert ALL math to LaTeX: inline $...$, display $$...$$\n"
+        "- Use only $ and $$ delimiters — not \\( \\) or \\[ \\]\n\n"
+        "OUTPUT: Return ONLY valid JSON — no explanation, no markdown fences.\n"
+        "Schema: {\"cells\": [{\"row\": int, \"col\": int, \"colSpan\": int, \"content\": str}]}\n"
+        "colSpan is optional and defaults to 1.\n"
+        "If the board is blank and there are no prior cells: {\"cells\": []}"
     )
 
-    # Step 4: Wrap the JPEG bytes in a types.Part object.
-    # This is Gemini's way of receiving non-text content (images, audio, etc.)
-    # in a multi-modal (text + image) request.
+    # Step 3: Wrap the JPEG bytes in a types.Part so Gemini receives the image.
     image_part = types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg")
 
-    # Step 5: Send both the text prompt and the image to Gemini in one call.
-    # Gemini reads the image AND the prompt together and returns a single
-    # text response — this is what "multi-modal" means.
+    # Step 4: Call Gemini with both the prompt and the image.
     response = gemini_client.models.generate_content(
         model=GEMINI_MODEL,
         contents=[prompt, image_part],
     )
 
-    # response.text can be None if Gemini had nothing to say (e.g. the frame
-    # showed nothing transcribable, or the response was safety-filtered).
-    # We treat None the same as an empty string — the server will skip the
-    # broadcast and just wait for the next frame.
-    return response.text.strip() if response.text else ""
+    if not response.text:
+        # Gemini returned nothing — keep the current grid so we don't lose data.
+        return current_notes
+
+    raw = response.text.strip()
+
+    # Gemini sometimes wraps JSON in a ```json ... ``` code fence even when told
+    # not to. Strip those fences before validating.
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    # Step 5: Validate the JSON before sending it to the browser.
+    # If Gemini produced invalid JSON, fall back to the current grid rather than
+    # crashing the session or sending garbage to every connected student.
+    try:
+        parsed = json.loads(raw)
+        if "cells" not in parsed or not isinstance(parsed["cells"], list):
+            return current_notes
+    except json.JSONDecodeError:
+        return current_notes
+
+    return raw
 
 
 # ---------------------------------------------------------------------------

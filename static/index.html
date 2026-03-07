@@ -130,6 +130,27 @@
       overflow-y: hidden;
     }
 
+    /* CSS grid that mirrors the whiteboard's 2D layout.
+       3 equal columns match the left / center / right thirds of the board.
+       Each cell is placed with grid-row and grid-column set from the JSON. */
+    .whiteboard-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px 20px;        /* row-gap col-gap */
+      align-items: start;    /* cells don't stretch to fill row height */
+      width: 100%;
+    }
+
+    /* Each grid cell gets a subtle border so the spatial zones are visible. */
+    .grid-cell {
+      min-width: 0;          /* prevents grid blowout from long equations */
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid #1e2235;
+      background: #0f1117;
+    }
+    .grid-cell:empty { display: none; }
+
     #empty-notes {
       color: #4b5563;
       font-style: italic;
@@ -255,19 +276,95 @@
     });
   }
 
-  // ---- Whiteboard handler ----
-  function handleWhiteboard({ full, delta }) {
-    if (!full && !delta) return;
-    const md = full || delta;
-    notesContent.innerHTML = marked.parse(md);
-    renderMathInElement(notesContent, {
+  // ---- Math protection helpers ----
+  // marked.js runs BEFORE KaTeX and mangles LaTeX in two ways:
+  //   1. \\ (matrix row separator) → \ — rows collapse
+  //   2. | characters → Markdown table syntax — matrices become lists
+  //
+  // Fix: extract all math blocks BEFORE marked.parse(), replace with placeholders,
+  // let marked do its Markdown work, then restore the original LaTeX for KaTeX.
+
+  function extractMath(md) {
+    const blocks = [];
+    // $$...$$ first so we don't split $$ into two separate $ matches.
+    md = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
+      blocks.push({ display: true, math });
+      return `MATHPLACEHOLDER${blocks.length - 1}END`;
+    });
+    // $...$ — [^\n$]+ prevents crossing line boundaries.
+    md = md.replace(/\$([^\n$]+?)\$/g, (_, math) => {
+      blocks.push({ display: false, math });
+      return `MATHPLACEHOLDER${blocks.length - 1}END`;
+    });
+    return { safeMd: md, blocks };
+  }
+
+  function restoreMath(html, blocks) {
+    return html.replace(/MATHPLACEHOLDER(\d+)END/g, (_, i) => {
+      const { display, math } = blocks[Number(i)];
+      return display ? `$$${math}$$` : `$${math}$`;
+    });
+  }
+
+  // Render a Markdown+LaTeX string into a DOM element (used for each grid cell).
+  function renderContent(el, md) {
+    const { safeMd, blocks } = extractMath(md);
+    el.innerHTML = restoreMath(marked.parse(safeMd), blocks);
+    renderMathInElement(el, {
       delimiters: [
         { left: '$$', right: '$$', display: true  },
         { left: '$',  right: '$',  display: false }
       ],
       throwOnError: false
     });
+  }
+
+  // ---- Whiteboard handler ----
+  function handleWhiteboard({ full, delta }) {
+    if (!full && !delta) return;
+    const raw = full || delta;
+
+    // Try to parse as the JSON grid format produced by ai.py.
+    // If it fails (empty string, old format, etc.) nothing is rendered —
+    // the panel just keeps its previous state.
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return;
+    }
+
+    const cells = parsed.cells;
+    if (!Array.isArray(cells)) return;
+
+    // Hide the "Waiting…" placeholder once we have real content.
     emptyNotes.style.display = 'none';
+
+    // Build a fresh CSS grid and populate it with cells from the JSON.
+    // We rebuild the whole grid on every update — it's fast enough and
+    // avoids the complexity of diffing the previous DOM state.
+    const grid = document.createElement('div');
+    grid.className = 'whiteboard-grid';
+
+    cells.forEach(({ row, col, colSpan = 1, content }) => {
+      const cell = document.createElement('div');
+      cell.className = 'grid-cell';
+
+      // CSS grid placement: grid-row and grid-column tell the browser exactly
+      // which cell this content belongs in. "span N" means it stretches across
+      // N column tracks, letting wide content (like a title) fill the full width.
+      cell.style.gridRow    = row;
+      cell.style.gridColumn = `${col} / span ${colSpan}`;
+
+      // Render Markdown+LaTeX content inside the cell using our existing pipeline.
+      renderContent(cell, content || '');
+      grid.appendChild(cell);
+    });
+
+    // Replace previous grid with the new one.
+    notesContent.innerHTML = '';
+    notesContent.appendChild(grid);
+
     notesBody.scrollTop = notesBody.scrollHeight;
   }
 

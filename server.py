@@ -29,8 +29,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 
-from ai import analyze_whiteboard, transcribe_audio
-from capture import start_audio_loop, start_camera_loop
+from ai import analyze_whiteboard
+from capture import start_camera_loop, start_streaming_audio_loop
 
 # ---------------------------------------------------------------------------
 # Startup configuration
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     # daemon=True means these threads automatically die when the main program
     # exits — we don't need to manually stop them.
     start_camera_loop(on_frame)
-    start_audio_loop(on_audio)
+    start_streaming_audio_loop(on_transcript_text)
 
     logger.info("Lecture Capture System started. Open http://localhost:8000")
 
@@ -250,8 +250,9 @@ def on_frame(frame: np.ndarray) -> None:
     """
     Called by the camera loop every 5 seconds with a new camera frame.
 
-    Sends the frame to Gemini, gets back any new whiteboard content,
-    appends it to the running notes, and broadcasts the update.
+    Sends the frame + current notes to Gemini, which returns an intelligently
+    merged update: new content added, changed content updated, blocked content
+    preserved. Broadcasts the result if anything changed.
 
     Args:
         frame: A numpy array (height × width × 3 BGR pixels) from OpenCV.
@@ -261,66 +262,54 @@ def on_frame(frame: np.ndarray) -> None:
     logger.info("Processing whiteboard frame...")
 
     try:
-        # analyze_whiteboard() handles encoding the frame and calling Gemini.
-        # It returns only the NEW content since the last capture (the "delta").
-        delta = analyze_whiteboard(gemini_client, frame, whiteboard_notes)
+        # analyze_whiteboard() performs an AI-assisted merge: it compares the
+        # current camera frame against the existing notes and returns an updated
+        # version that preserves blocked content, updates changed content, and
+        # adds new content. Gemini does the diffing — we just pass it both.
+        updated_notes = analyze_whiteboard(gemini_client, frame, whiteboard_notes)
     except Exception:
         # Log the full error with stack trace but keep the server running.
         # One failed Gemini call should not crash the whole session.
         logger.exception("Gemini Vision call failed")
         return
 
-    if delta:
-        # Append the new content to the running notes with a blank line between
-        # sections. .strip() removes any leading/trailing whitespace.
-        whiteboard_notes = (whiteboard_notes + "\n\n" + delta).strip()
+    if updated_notes != whiteboard_notes:
+        # Gemini detected a change — replace the notes with the merged result.
+        whiteboard_notes = updated_notes
 
-        # Broadcast the update to all connected browsers.
-        # We send both the delta (just what's new) and the full document so
-        # late-joining students can catch up by reading "full".
         broadcast_sync({
             "type": "whiteboard",
-            "delta": delta,
+            "delta": "",
             "full": whiteboard_notes,
         })
         logger.info("Whiteboard updated (%d chars total)", len(whiteboard_notes))
     else:
-        logger.info("No new whiteboard content detected")
+        logger.info("Whiteboard unchanged — no broadcast needed")
 
 
-def on_audio(chunk: np.ndarray) -> None:
+def on_transcript_text(text: str) -> None:
     """
-    Called by the audio loop every 5 seconds with a new audio chunk.
+    Called by the streaming audio loop whenever ElevenLabs commits a transcript segment.
 
-    Sends the chunk to ElevenLabs, gets back the transcribed text,
-    appends it to the running transcript, and broadcasts the update.
+    Unlike the old on_audio() which received a raw numpy array and had to upload
+    it to ElevenLabs itself, this callback receives already-transcribed text.
+    The streaming loop in capture.py handles the WebSocket connection and VAD;
+    this function just appends the result and broadcasts it.
 
     Args:
-        chunk: A 1-D float32 numpy array of 5 seconds of audio at 16kHz.
+        text: The committed transcript text for one speech segment (a sentence
+              or clause that ElevenLabs detected ended with a pause).
     """
-    global transcript  # We need to modify this module-level variable.
+    global transcript
 
-    logger.info("Transcribing audio chunk...")
+    transcript = (transcript + " " + text).strip()
 
-    try:
-        text = transcribe_audio(chunk)
-    except Exception:
-        logger.exception("ElevenLabs transcription failed")
-        return
-
-    if text:
-        # Append the new text with a space separator.
-        transcript = (transcript + " " + text).strip()
-
-        broadcast_sync({
-            "type": "transcript",
-            "delta": text,
-            "full": transcript,
-        })
-        # Only log the first 80 chars to keep the terminal readable.
-        logger.info("Transcript updated: %s", text[:80])
-    else:
-        logger.info("Empty transcription (silence or no speech detected)")
+    broadcast_sync({
+        "type": "transcript",
+        "delta": text,
+        "full": transcript,
+    })
+    logger.info("Transcript: %s", text[:80])
 
 
 # ---------------------------------------------------------------------------
