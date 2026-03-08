@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas Mode - AI Study Suite</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; color: #a5b4fc; margin-right: 12px; }
+    
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Main drawing container (holds toolbar + scrollable area) */
+    .editor-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Scrollable Canvas container */
+    #canvas-workspace {
+      flex: 1;
+      background: #1e2235;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      overflow-y: auto;
+    }
+
+    /* Each document page simulated as an A4 size paper */
+    .document-page {
+      background: #ffffff;
+      width: 794px;
+      height: 1123px; /* A4 size at 96 DPI */
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+      margin-bottom: 40px;
+      border-radius: 6px;
+      position: relative;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    /* Page delete button (appears on hover) */
+    .page-delete-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #ef4444;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s, background 0.2s;
+      z-index: 10;
+    }
+    .page-delete-btn:hover { background: #dc2626; }
+    .document-page:hover .page-delete-btn { opacity: 1; }
+
+    /* Top Ribbon Toolbar (Microsoft Word style) */
+    #toolbar {
+      width: 100%;
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 8px 24px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 100;
+    }
+
+    .tool-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 4px;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 64px;
+    }
+
+    .tool-btn:hover {
+      background: #2d3148;
+      border-color: #374151;
+      color: #e2e8f0;
+    }
+
+    .tool-btn.active {
+      background: #3730a3;
+      border-color: #4f46e5;
+      color: #ffffff;
+    }
+    
+    .tool-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .tool-sep {
+      width: 1px;
+      height: 36px;
+      background: #2d3148;
+      margin: 0 8px;
+    }
+
+    /* Right Sidebar for AI Assistant */
+    #sidebar {
+      width: 380px;
+      background: #12151f;
+      border-left: 1px solid #2d3148;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -4px 0 15px rgba(0,0,0,0.3);
+      z-index: 50;
+    }
+
+    .sidebar-header {
+      padding: 16px 20px;
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      font-weight: 600;
+      color: #a5b4fc;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: 0.05em;
+    }
+
+    .chat-history {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .message {
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      max-width: 90%;
+      word-wrap: break-word;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .message.ai {
+      background: #1e2235;
+      color: #e2e8f0;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      border: 1px solid #2d3148;
+    }
+
+    .message.user {
+      background: #6366f1;
+      color: #ffffff;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .chat-input-area {
+      padding: 16px;
+      border-top: 1px solid #2d3148;
+      background: #1a1d27;
+    }
+
+    .chat-input {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 14px;
+      color: #e2e8f0;
+      resize: none;
+      outline: none;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      font-family: inherit;
+    }
+
+    .chat-input:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header completely matches index.html -->
+  <header>
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+      <h1>Lecture Live Study Suite</h1>
+      <span style="color: #6b7280; font-size: 0.85rem; padding-left: 12px; border-left: 1px solid #2d3148;">Interactive Homework Mode</span>
+    </div>
+    <nav style="display: flex; gap: 24px; align-items: center;">
+      <a href="/" style="color: #94a3b8; text-decoration: none; font-weight: 500; transition: color 0.2s;" onmouseover="this.style.color='#a5b4fc'" onmouseout="this.style.color='#94a3b8'">Lecture Mode</a>
+      <a href="/canvas" style="color: #a5b4fc; text-decoration: none; font-weight: 600; border-bottom: 2px solid #6366f1; padding-bottom: 4px;">Canvas Mode</a>
+    </nav>
+  </header>
+
+  <main>
+    
+    <!-- Editor Container (Left) -->
+    <div class="editor-container">
+      
+      <!-- Top Ribbon Toolbar -->
+      <div id="toolbar">
+        <button class="tool-btn active" onclick="setMode('draw')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+          Pen
+        </button>
+        <button class="tool-btn" onclick="setMode('erase')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 16L12 20.5 21.5 16"></path><path d="M12 4l9.5 4.5-9.5 4.5L2.5 8.5 12 4z"></path><path d="M2 12l10 4.5L22 12"></path></svg>
+          Eraser
+        </button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" onclick="handleUndo()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path></svg>
+          Undo
+        </button>
+        <button class="tool-btn" onclick="handleRedo()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"></path><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"></path></svg>
+          Redo
+        </button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" style="color: #4ade80;" onclick="addPage()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+          Add Page
+        </button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" style="color: #facc15;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          Import
+        </button>
+        <button class="tool-btn" style="color: #f87171;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Export
+        </button>
+      </div>
+
+      <!-- PDF/Canvas Workspace (Scrollable Area) -->
+      <div id="canvas-workspace">
+        
+        <!-- Initial Blank Page -->
+        <div class="document-page" id="page-1">
+          <canvas id="canvas-1"></canvas>
+          <button class="page-delete-btn" onclick="removePage(this)" title="Delete Page">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- AI Helper Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="22" height="22"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+        AI Canvas Assistant
+      </div>
+      <div class="chat-history" id="chat-history">
+        <div class="message ai">
+          Hi! ✨ I can see what you're working on in your canvas. Let me know if you need help understanding a concept or solving a problem!
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <div style="display:flex; gap: 8px; align-items:flex-end;">
+          <button class="tool-btn" id="mic-btn" style="padding:6px; min-width:auto; margin:0; flex-shrink:0;" onclick="toggleMic()" title="Speech to Text">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          </button>
+          <textarea class="chat-input" id="chat-textarea" rows="2" placeholder="Ask a question... (Enter to send)"></textarea>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <script>
+    let pageCount = 1;
+    const fabricCanvases = [];
+    let currentMode = 'draw';
+    let activeCanvas = null;
+
+    function initFabricCanvas(id) {
+      const canvas = new fabric.Canvas(id, {
+        isDrawingMode: true,
+        width: 794,
+        height: 1123,
+      });
+      canvas.freeDrawingBrush.color = '#000000';
+      canvas.freeDrawingBrush.width = 3;
+      
+      canvas._undoStack = [];
+      canvas._redoStack = [];
+      let isUndoing = false;
+      canvas.on('object:added', function(e) {
+          if(isUndoing) return;
+          canvas._undoStack.push(e.target);
+          canvas._redoStack = []; // clear redo on new action
+      });
+      canvas.on('mouse:down', function() { activeCanvas = canvas; });
+      canvas.undo = function() {
+          if(canvas._undoStack.length === 0) return;
+          let obj = canvas._undoStack.pop();
+          canvas._redoStack.push(obj);
+          isUndoing = true;
+          canvas.remove(obj);
+          isUndoing = false;
+      };
+      canvas.redo = function() {
+          if(canvas._redoStack.length === 0) return;
+          let obj = canvas._redoStack.pop();
+          canvas._undoStack.push(obj);
+          isUndoing = true;
+          canvas.add(obj);
+          isUndoing = false;
+      };
+
+      fabricCanvases.push(canvas);
+      if(!activeCanvas) activeCanvas = canvas;
+      updateCanvasModes();
+    }
+    
+    function handleUndo() { if(activeCanvas) activeCanvas.undo(); }
+    function handleRedo() { if(activeCanvas) activeCanvas.redo(); }
+
+    document.addEventListener('keydown', function(e) {
+       if(e.ctrlKey && e.key.toLowerCase() === 'z') { e.preventDefault(); handleUndo(); }
+       if((e.ctrlKey && e.key.toLowerCase() === 'y') || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'z')) { e.preventDefault(); handleRedo(); }
+    });
+
+    function addPage() {
+      pageCount++;
+      const workspace = document.getElementById('canvas-workspace');
+      const newPage = document.createElement('div');
+      newPage.className = 'document-page';
+      newPage.id = 'page-' + pageCount;
+      
+      const newCanvas = document.createElement('canvas');
+      const canvasId = 'canvas-' + pageCount;
+      newCanvas.id = canvasId;
+      newPage.appendChild(newCanvas);
+      
+      const delBtn = document.createElement('button');
+      delBtn.className = 'page-delete-btn';
+      delBtn.title = 'Delete Page';
+      delBtn.onclick = function() { removePage(this); };
+      delBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+      newPage.appendChild(delBtn);
+      
+      workspace.appendChild(newPage);
+      
+      initFabricCanvas(canvasId);
+      
+      // Scroll smoothly to the new page
+      newPage.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function removePage(btn) {
+       const workspace = document.getElementById('canvas-workspace');
+       if (workspace.querySelectorAll('.document-page').length <= 1) {
+           alert("You must have at least one page.");
+           return;
+       }
+       const pageDiv = btn.closest('.document-page');
+       const canvasEl = pageDiv.querySelector('canvas');
+       
+       // Clean up the fabric.js instance from memory and our array
+       const index = fabricCanvases.findIndex(c => c.getElement() === canvasEl);
+       if (index > -1) {
+           fabricCanvases[index].dispose();
+           fabricCanvases.splice(index, 1);
+       }
+       if (activeCanvas && activeCanvas.getElement() === canvasEl) {
+           activeCanvas = null;
+       }
+       
+       // Remove the HTML element
+       pageDiv.remove();
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      updateCanvasModes();
+    }
+
+    function updateCanvasModes() {
+      fabricCanvases.forEach(canvas => {
+        if (currentMode === 'draw') {
+          canvas.isDrawingMode = true;
+          canvas.freeDrawingBrush.color = '#000000';
+          canvas.freeDrawingBrush.width = 3;
+        } else if (currentMode === 'erase') {
+          canvas.isDrawingMode = true;
+          // Hackathon mock eraser: draw with white
+          canvas.freeDrawingBrush.color = '#ffffff'; 
+          canvas.freeDrawingBrush.width = 40;
+        }
+      });
+    }
+
+    // Initialize first page
+    initFabricCanvas('canvas-1');
+
+    // Chat mock interaction just to show judges how cool it looks interactively
+    const chatInput = document.getElementById('chat-textarea');
+    const chatHistory = document.getElementById('chat-history');
+
+    chatInput.addEventListener('keydown', async function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const text = this.value.trim();
+        if (text) {
+          const userMsg = document.createElement('div');
+          userMsg.className = 'message user';
+          
+          userMsg.innerText = text;
+          
+          chatHistory.appendChild(userMsg);
+          this.value = '';
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+
+          // Placeholder AI thinking effect
+          const aiMsg = document.createElement('div');
+          aiMsg.className = 'message ai';
+          aiMsg.textContent = "Processing your canvas...";
+          chatHistory.appendChild(aiMsg);
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+
+          try {
+            // Check if there are any drawings across all canvases
+            let hasDrawings = false;
+            fabricCanvases.forEach(fc => {
+                if (fc.getObjects().length > 0) hasDrawings = true;
+            });
+            
+            let finalImageBase64 = null;
+            
+            if (hasDrawings) {
+                // Merge all Fabric Canvases into one large vertical image
+                const offscreenCanvas = document.createElement('canvas');
+                offscreenCanvas.width = 794;
+                offscreenCanvas.height = 1123 * fabricCanvases.length;
+                const ctx = offscreenCanvas.getContext('2d');
+                
+                // Draw a white background first so transparent areas don't turn black
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+
+                // Use Fabric's native method to render all objects perfectly to a single flat canvas first
+                fabricCanvases.forEach((fc, index) => {
+                   const pageCanvas = fc.toCanvasElement();
+                   ctx.drawImage(pageCanvas, 0, index * 1123);
+                });
+                
+                finalImageBase64 = offscreenCanvas.toDataURL('image/jpeg', 0.8);
+            }
+
+            // Send to our new FastAPI endpoint
+            const payload = { message: text };
+            if (finalImageBase64) { payload.image_base64 = finalImageBase64; }
+            
+            const res = await fetch('/api/canvas-chat', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(payload)
+            });
+            
+            const data = await res.json();
+            
+            if (data.error) {
+               aiMsg.textContent = "Oops! Something went wrong: " + data.error;
+            } else {
+               // Use marked to render the markdown response nicely!
+               aiMsg.innerHTML = marked.parse(data.response);
+            }
+          } catch(err) {
+             console.error(err);
+             aiMsg.textContent = "Error connecting to AI. Please ensure the server is running.";
+          }
+          
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+      }
+    });
+
+    // Make toolbar buttons toggle active visually
+    const toolBtns = document.querySelectorAll('.tool-btn:not([style]):not([title])'); 
+    toolBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        // Exclude undo/redo from holding the active state
+        if(btn.textContent.includes('Undo') || btn.textContent.includes('Redo')) return;
+        toolBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    // STT logic
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let isRecording = false;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        const ta = document.getElementById('chat-textarea');
+        ta.value = ta.value ? ta.value + " " + transcript : transcript;
+      };
+      recognition.onend = () => {
+        isRecording = false;
+        document.getElementById('mic-btn').classList.remove('active');
+        document.getElementById('mic-btn').style.color = '#94a3b8';
+      };
+    }
+    function toggleMic() {
+       if(!recognition) return alert("Speech recognition not supported in this browser.");
+       if(isRecording) {
+         recognition.stop();
+       } else {
+         recognition.start();
+         isRecording = true;
+         document.getElementById('mic-btn').classList.add('active');
+         document.getElementById('mic-btn').style.color = '#ef4444';
+       }
+    }
+  </script>
+</body>
+</html>

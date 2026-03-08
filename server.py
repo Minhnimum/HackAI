@@ -27,6 +27,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import base64
+from io import BytesIO
+from PIL import Image
 from google import genai
 
 from ai import analyze_whiteboard
@@ -326,6 +330,58 @@ async def index():
     immediately opens a WebSocket connection back to /ws.
     """
     return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/canvas")
+async def canvas():
+    """
+    Serve the AI Canvas Mode student-facing HTML page.
+    """
+    return FileResponse(STATIC_DIR / "canvas.html")
+
+class CanvasChatRequest(BaseModel):
+    image_base64: str | None = None
+    message: str
+    attachment_base64: str | None = None
+
+@app.post("/api/canvas-chat")
+async def canvas_chat(request: CanvasChatRequest):
+    """
+    Receive the drawing from the canvas and a user message, and query Gemini 1.5 Pro.
+    """
+    try:
+        # Prepare the conversation history/content
+        contents = [request.message]
+
+        # Decode the base64 canvas image coming from the browser (if any drawings exist)
+        if request.image_base64:
+            img_data = request.image_base64
+            if "," in img_data:
+                img_data = img_data.split(",")[1]
+                
+            img_bytes = base64.b64decode(img_data)
+            img = Image.open(BytesIO(img_bytes))
+            contents.insert(0, img)
+            contents.insert(0, "This is the current state of the user's drawing canvas:")
+
+        # If there's an attached image, decode it and add it
+        if request.attachment_base64:
+            att_data = request.attachment_base64
+            if "," in att_data:
+                att_data = att_data.split(",")[1]
+            att_bytes = base64.b64decode(att_data)
+            att_img = Image.open(BytesIO(att_bytes))
+            contents.insert(0, att_img)
+            contents.insert(0, "This is the image file the user attached to their message:")
+
+        # Ask Gemini to respond based on the image using a faster, more available model
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash", # Switched to flash to avoid 503 high demand errors
+            contents=contents
+        )
+        return {"response": response.text}
+    except Exception as e:
+        logger.exception("Canvas Chat Error")
+        return {"error": str(e)}
 
 
 # ---------------------------------------------------------------------------
