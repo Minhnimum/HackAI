@@ -546,6 +546,48 @@ async def canvas_chat(request: CanvasChatRequest):
         logger.exception("Canvas Chat Error")
         return {"error": str(e)}
 
+class CanvasSuggestRequest(BaseModel):
+    image_base64: str
+
+@app.post("/api/canvas-suggest")
+async def canvas_suggest(request: CanvasSuggestRequest):
+    """
+    Look at the canvas. If there's an incomplete math equation (like "1 + 1 = "),
+    return just the answer. If not, return an empty string.
+    """
+    try:
+        if not request.image_base64:
+            return {"suggestion": ""}
+            
+        img_data = request.image_base64
+        if "," in img_data:
+            img_data = img_data.split(",")[1]
+        img_bytes = base64.b64decode(img_data)
+        img = Image.open(BytesIO(img_bytes))
+        
+        prompt = (
+            "Analyze this whiteboard canvas drawing. If there is an incomplete math equation, formula, or question at the end (like '1 + 1 =' or '2 x 3 ='), "
+            "output ONLY the answer to complete it (e.g. '2' or '6'). If it is not a math question or equation, "
+            "or if there is nothing to answer, output EXACTLY the word 'NONE'. Do not provide any explanation, markdown, or extra text."
+        )
+        
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt, img],
+        )
+        
+        text = response.text.strip()
+        logger.info(f"Auto-Suggest Response: {text}")
+
+        if text.upper() == "NONE" or not text:
+            return {"suggestion": ""}
+            
+        return {"suggestion": text}
+    except Exception as e:
+        logger.exception("Canvas Suggest Error")
+        return {"suggestion": ""}
+
+
 
 @app.get("/")
 async def index():

@@ -4,31 +4,31 @@
    The left border acts as the primary visual indicator; the background
    gives it separation from the panel body without feeling boxy. */
 .segment {
-  border-left: 2px solid #1e2235;
-  padding: 8px 12px;
-  margin-bottom: 6px;
-  border-radius: 0 8px 8px 0;
-  background: #0f1220;
-  color: #8893ae;
-  transition: border-color 0.5s ease, background 0.5s ease, color 0.5s ease;
-  font-size: 0.875rem;
-  line-height: 1.75;
+  border-left: 3px solid #e2e8f0;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 4px 15px 15px 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.5s ease;
+  font-size: 1.05rem;
+  line-height: 1.6;
+  box-shadow: 1px 2px 0px rgba(0,0,0,0.02);
 }
 
 /* Newly arrived segment — indigo accent that fades back over 3 seconds */
 .segment.new {
-  border-color: #6366f1;
-  background: #141730;
-  color: #c7cef5;
-  /* Subtle indigo glow on the left to draw the eye to new content */
-  box-shadow: -1px 0 8px rgba(99, 102, 241, 0.25);
+  border-color: var(--accent);
+  background: var(--bg-active);
+  color: var(--text-main);
+  box-shadow: -2px 0 10px rgba(var(--shadow-color), 0.15);
 }
 
 /* In-progress partial — clearly secondary, not final */
 .segment.partial {
-  border-color: #1a1d2e;
+  border-color: #cbd5e1;
   background: transparent;
-  color: #2d3350;
+  color: var(--text-muted);
   font-style: italic;
   box-shadow: none;
 }

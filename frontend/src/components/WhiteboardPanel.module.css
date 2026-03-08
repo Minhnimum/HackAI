@@ -6,25 +6,24 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  background: #0f1117;
-  /* Subtle right divider that fades — draws the eye to the content, not the border */
-  border-right: 1px solid #1a1d2e;
+  background: var(--bg-primary); /* Warm paper off-white */
+  border-right: 2px dashed var(--border-light); /* Hand-drawn separator */
 }
 
-/* Panel label bar — matches the transcript panel header visually */
+/* Panel label bar — hand-drawn sketch style */
 .panelHeader {
-  background: #0d0f1a;
+  background: var(--bg-secondary);
   padding: 0 22px;
-  height: 38px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.68rem;
+  gap: 12px;
+  font-family: 'Caveat', cursive;
+  font-size: 1.6rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #353a5e;
-  border-bottom: 1px solid #141726;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-bottom: 2px solid var(--border-light);
   flex-shrink: 0;
 }
 
@@ -34,8 +33,8 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #6366f1;
-  opacity: 0.5;
+  background: var(--accent);
+  opacity: 0.8;
   flex-shrink: 0;
 }
 
@@ -44,14 +43,15 @@
   flex: 1;
   overflow-y: auto;
   padding: 28px 32px;
-  scrollbar-color: #1e2235 transparent;
+  background: transparent;
 }
 
 /* Placeholder before any content arrives */
 .emptyState {
-  color: #1e2235;
-  font-size: 0.88rem;
+  color: var(--text-placeholder);
+  font-size: 1.2rem;
+  font-family: 'Caveat', cursive;
   text-align: center;
   margin-top: 100px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.05em;
 }

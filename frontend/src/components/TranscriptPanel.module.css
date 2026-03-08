@@ -6,35 +6,35 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Slightly deeper dark so the sidebar reads as distinct from the whiteboard */
-  background: #0c0e18;
+  /* Slightly deeper off-white to distinguish from the whiteboard */
+  background: var(--bg-hover);
 }
 
 /* Panel label bar — sibling to the whiteboard's panelHeader */
 .panelHeader {
-  background: #0d0f1a;
+  background: var(--bg-secondary);
   padding: 0 22px;
-  height: 38px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.68rem;
+  gap: 12px;
+  font-family: 'Caveat', cursive;
+  font-size: 1.6rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #353a5e;
-  border-bottom: 1px solid #141726;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-bottom: 2px solid var(--border-light);
   flex-shrink: 0;
 }
 
-/* Matching accent dot (same pattern as WhiteboardPanel header) */
+/* Matching accent dot */
 .panelHeader::before {
   content: '';
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #6366f1;
-  opacity: 0.5;
+  background: var(--accent);
+  opacity: 0.8;
   flex-shrink: 0;
 }
 
@@ -42,24 +42,26 @@
 .panelBody {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 14px 20px;
-  font-size: 0.88rem;
-  line-height: 1.75;
-  color: #8893ae;
-  scrollbar-color: #1e2235 transparent;
+  padding: 18px 16px 20px;
+  font-size: 1.05rem;
+  font-family: 'Comic Neue', cursive;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: transparent;
 }
 
 /* Placeholder before any audio arrives */
 .emptyState {
-  color: #1e2235;
-  font-size: 0.85rem;
+  color: var(--text-placeholder);
+  font-size: 1.2rem;
+  font-family: 'Caveat', cursive;
   text-align: center;
-  margin-top: 40px;
+  margin-top: 50px;
 }
 
 @media (max-width: 640px) {
   .panel {
     width: 100%;
-    border-top: 1px solid #141726;
+    border-top: 2px dashed var(--border-light);
   }
 }

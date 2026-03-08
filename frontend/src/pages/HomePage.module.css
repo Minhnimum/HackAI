@@ -1,29 +1,58 @@
 /*
  * HomePage.module.css — EchoBoard landing page styles.
  *
- * Palette: dark base (#0f1117), indigo accent (#6366f1), near-white text.
- * Tone: calm and academic, not startup-flashy.
+ * Hand-drawn aesthetic using Caveat and Comic Neue.
+ * Color scheme: warm off-white base with indigo/blue ink accents.
  */
 
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Comic+Neue:wght@300;400;700&display=swap');
+
 :root {
-  --bg:           #0f1117;
-  --surface:      #13151f;
-  --border:       #1e2235;
-  --indigo:       #6366f1;
-  --indigo-light: #a5b4fc;
-  --indigo-dim:   #2e3069;
-  --green:        #22c55e;
-  --yellow:       #eab308;
+  --bg:           var(--bg-primary); /* Warm paper off-white */
+  --surface:      var(--bg-secondary);
+  --border:       var(--accent); /* Indigo accent border */
+  --border-light: var(--border-main);
+  --indigo:       var(--accent);
+  --indigo-light: var(--accent-light);
+  --indigo-dim:   var(--accent-dark);
   --red:          #ef4444;
-  --text-primary: #dde1ef;
-  --text-muted:   #5a637a;
-  --text-faint:   #2d3350;
+  --text-primary: var(--text-main); /* Dark indigo/black ink */
+  --text-muted:    var(--text-muted);
+  --text-faint:   var(--text-placeholder);
 }
 
-/* ---------------------------------------------------------------------------
-   Page
---------------------------------------------------------------------------- */
+/* Global selector to handle dark mode specifically for module classes if needed */
+:global([data-theme="dark"]) .bgDoodle {
+  opacity: 0.55;
+  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.4));
+}
 
+:global([data-theme="dark"]) .page {
+  background: var(--bg-primary);
+}
+
+/* Dark mode hero text — chalk-like appearance */
+:global([data-theme="dark"]) .heroTitle {
+  color: #e2e8f0;
+}
+
+:global([data-theme="dark"]) .heroSubtitle {
+  color: var(--text-secondary);
+}
+
+/* Dark mode feature cards — translucent bg with subtle glow */
+:global([data-theme="dark"]) .featureCard {
+  background: rgba(26, 26, 29, 0.85);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.08);
+}
+
+/* Dark mode wordmark */
+:global([data-theme="dark"]) .wordmark {
+  color: var(--accent);
+}
+
+/* Base font applies to the whole page */
 .page {
   min-height: 100vh;
   overflow-y: auto;
@@ -33,7 +62,25 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  font-family: 'Comic Neue', cursive, sans-serif;
   animation: rise 0.4s ease both;
+  position: relative;
+}
+
+/* ---------------------------------------------------------------------------
+   Background Math Doodle
+--------------------------------------------------------------------------- */
+.bgDoodle {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.18;
+  z-index: 0;
+}
+
+.bgSvg {
+  width: 100%;
+  height: 100%;
 }
 
 @keyframes rise {
@@ -50,62 +97,161 @@
   max-width: 1060px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center; /* Center the wordmark */
   padding: 24px 40px;
+  position: relative;
 }
 
 .wordmark {
-  font-size: 0.82rem;
-  font-weight: 800;
-  color: var(--indigo-light);
-  letter-spacing: 0.08em;
+  font-family: 'Caveat', cursive;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--indigo);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
+/* In the top bar, hide the status badge to match the image, or keep it subtle */
+.topBar .statusBadge {
+  opacity: 0.6;
+}
+
+.topBarActions {
+  position: absolute;
+  right: 40px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.themeToggle {
+  background: transparent;
+  border: 1.5px solid var(--border-light);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.themeToggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: rotate(15deg) scale(1.1);
+}
+
+/* Spin animation when theme is transitioning */
+:global(body.theme-transitioning) .themeToggle {
+  animation: toggleSpin 0.5s ease;
+}
+
+@keyframes toggleSpin {
+  0%   { transform: rotate(0deg) scale(1); }
+  50%  { transform: rotate(180deg) scale(1.3); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
 /* ---------------------------------------------------------------------------
-   Status badge — shared between top bar and hero
+   Hero
+--------------------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  min-height: 45vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 40px 20px;
+}
+
+.hero > * { position: relative; z-index: 2; }
+
+/* Small label above the main title */
+.eyebrow {
+  display: none; /* Hide for cleaner look like the image */
+}
+
+/* Hand-drawn title */
+.heroTitle {
+  font-family: 'Caveat', cursive;
+  font-size: clamp(3rem, 7vw, 4.5rem);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  margin-bottom: 24px;
+}
+
+.heroSubtitle {
+  font-size: 1.2rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 580px;
+  margin-bottom: 40px;
+}
+
+/* Button & Status row */
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ---------------------------------------------------------------------------
+   Hand-drawn Status Badge
 --------------------------------------------------------------------------- */
 
 .statusBadge {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 13px;
-  border-radius: 999px;
-  font-size: 0.78rem;
+  gap: 8px;
+  padding: 8px 18px;
+  font-size: 1.05rem;
+  font-family: 'Comic Neue', cursive;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  
+  /* Hand-drawn border effect */
+  border: 1.5px solid var(--border-light);
+  border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+  
+  background: transparent;
   color: var(--text-muted);
-  transition: color 0.3s, border-color 0.3s, background 0.3s;
+  transition: all 0.3s ease;
 }
 
 .statusBadgeLarge {
-  font-size: 0.85rem;
-  padding: 7px 16px;
+  font-size: 1.1rem;
+  padding: 10px 24px;
 }
 
 .statusBadge[data-status="live"] {
-  background: rgba(34, 197, 94, 0.07);
-  border-color: rgba(34, 197, 94, 0.28);
-  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #16a34a;
 }
 .statusBadge[data-status="connecting"] {
-  background: rgba(234, 179, 8, 0.07);
-  border-color: rgba(234, 179, 8, 0.28);
-  color: var(--yellow);
+  border-color: rgba(234, 179, 8, 0.5);
+  color: #ca8a04;
 }
 .statusBadge[data-status="error"] {
-  background: rgba(239, 68, 68, 0.07);
-  border-color: rgba(239, 68, 68, 0.28);
-  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #dc2626;
 }
 
 .pulseDot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: currentColor;
 }
@@ -116,177 +262,159 @@
 
 @keyframes dot {
   0%, 100% { opacity: 1;   transform: scale(1);   }
-  50%       { opacity: 0.4; transform: scale(1.5); }
+  50%       { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* Dark mode status badge overrides — brighter colors for dark backgrounds */
+:global([data-theme="dark"]) .statusBadge[data-status="live"] {
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #4ade80;
+}
+:global([data-theme="dark"]) .statusBadge[data-status="connecting"] {
+  border-color: rgba(250, 204, 21, 0.5);
+  color: #facc15;
+}
+:global([data-theme="dark"]) .statusBadge[data-status="error"] {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #f87171;
+}
+
+/* Dark mode card title — use accent for chalk-like appearance */
+:global([data-theme="dark"]) .cardTitle {
+  color: var(--accent);
+}
+
+/* Dark mode card body — brighter for readability */
+:global([data-theme="dark"]) .cardBody {
+  color: var(--text-secondary);
+}
+
+/* Dark mode join button — ensure readable text */
+:global([data-theme="dark"]) .joinButton {
+  color: #121214;
 }
 
 /* ---------------------------------------------------------------------------
-   Hero
---------------------------------------------------------------------------- */
-
-.hero {
-  position: relative;
-  width: 100%;
-  max-width: 720px;
-  min-height: 55vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 48px 40px 40px;
-}
-
-/* Soft radial glow — indigo halo behind the title */
-.hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse 60% 50% at 50% 42%, rgba(99,102,241,0.1) 0%, transparent 70%);
-  pointer-events: none;
-}
-
-.hero > * { position: relative; }
-
-/* Small uppercase label above the main title */
-.eyebrow {
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--indigo);
-  margin-bottom: 18px;
-  opacity: 0.9;
-}
-
-/* Gradient title — white fading into soft indigo */
-.heroTitle {
-  font-size: clamp(2rem, 5.5vw, 3.5rem);
-  font-weight: 800;
-  line-height: 1.15;
-  letter-spacing: -0.03em;
-  margin-bottom: 20px;
-  background: linear-gradient(150deg, #ffffff 20%, #c7d0ff 65%, #a5b4fc 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-}
-
-.heroSubtitle {
-  font-size: 1rem;
-  color: var(--text-muted);
-  line-height: 1.8;
-  max-width: 460px;
-  margin-bottom: 36px;
-}
-
-/* Badge and CTA sit side by side */
-.heroActions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-/* ---------------------------------------------------------------------------
-   Join button
+   Hand-drawn Join button
 --------------------------------------------------------------------------- */
 
 .joinButton {
-  border: none;
   cursor: pointer;
-  font-family: inherit;
-  font-size: 0.92rem;
+  font-family: 'Comic Neue', cursive;
+  font-size: 1.1rem;
   font-weight: 700;
-  letter-spacing: 0.025em;
-  padding: 11px 28px;
-  border-radius: 9px;
-  color: #fff;
-  background: linear-gradient(135deg, #4f52c5 0%, #6366f1 60%, #7c3aed 100%);
-  background-size: 200% auto;
-  transition: background-position 0.3s ease, transform 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 2px 12px rgba(99,102,241,0.25);
+  padding: 11px 32px;
+  color: var(--bg-secondary);
+  background: var(--indigo);
+  
+  /* Hand-drawn border effect */
+  border: 2px solid var(--indigo-dim);
+  border-radius: 15px 255px 15px 225px/225px 15px 255px 15px;
+  
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 2px 4px 0px rgba(var(--shadow-color), 0.2);
 }
 
 .joinButton:hover {
-  background-position: right center;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(99,102,241,0.4);
+  transform: translateY(-2px) rotate(-1deg);
+  box-shadow: 4px 6px 0px rgba(var(--shadow-color), 0.25);
+  background: var(--accent-hover);
 }
 
 .joinButton:active {
-  transform: translateY(0);
-  box-shadow: 0 1px 6px rgba(99,102,241,0.2);
+  transform: translateY(1px);
+  box-shadow: 1px 2px 0px rgba(var(--shadow-color), 0.2);
 }
 
 /* ---------------------------------------------------------------------------
-   Divider between hero and cards
+   Divider
 --------------------------------------------------------------------------- */
 
 .divider {
-  width: 100%;
-  max-width: 1060px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border) 30%, var(--border) 70%, transparent);
-  margin-bottom: 48px;
+  display: none; /* Removed for cleaner look */
 }
 
 /* ---------------------------------------------------------------------------
-   Feature grid
+   Feature grid (Hand-drawn cards)
 --------------------------------------------------------------------------- */
 
 .featureGrid {
   width: 100%;
-  max-width: 960px;
+  max-width: 1040px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
-  padding: 0 40px 56px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 30px;
+  padding: 20px 40px 60px;
 }
 
 .featureCard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px 20px;
+  background: var(--bg-secondary);
+  padding: 30px 24px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  gap: 16px;
+  
+  /* Hand-drawn border box */
+  border: 2px solid var(--border);
+  border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+  box-shadow: 3px 5px 0px rgba(var(--shadow-color), 0.1);
+  
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+}
+
+/* Randomize sketch corners slightly for each card using nth-child */
+.featureCard:nth-child(2) {
+  border-radius: 15px 225px 15px 255px/255px 15px 225px 15px;
+}
+.featureCard:nth-child(3) {
+  border-radius: 225px 15px 255px 15px/15px 255px 15px 225px;
 }
 
 .featureCard:hover {
-  transform: translateY(-3px);
-  border-color: var(--indigo-dim);
-  box-shadow: 0 8px 32px rgba(99,102,241,0.1);
+  transform: translateY(-4px) rotate(1deg);
+  box-shadow: 5px 8px 0px rgba(var(--shadow-color), 0.15);
 }
 
-/* Icon area — small rounded square */
+/* Quote-like decorations on cards */
+.featureCard::after {
+  content: '”';
+  font-family: 'Caveat', cursive;
+  font-size: 4rem;
+  color: var(--border-light);
+  position: absolute;
+  top: -10px;
+  right: 15px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Icon area — hand-drawn square */
 .cardIcon {
-  font-size: 1.2rem;
+  font-size: 1.6rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: rgba(99,102,241,0.08);
-  border: 1px solid rgba(99,102,241,0.15);
-  border-radius: 9px;
-  color: var(--indigo-light);
+  width: 50px;
+  height: 50px;
+  background: var(--bg-active);
+  border: 1.5px solid var(--border-light);
+  border-radius: 15px 225px 15px 255px/255px 15px 225px 15px;
+  color: var(--indigo);
 }
 
 .cardTitle {
-  font-size: 0.9rem;
+  font-family: 'Caveat', cursive;
+  font-size: 1.8rem;
   font-weight: 700;
-  color: var(--indigo-light);
-  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  margin-top: 8px;
 }
 
 .cardBody {
-  font-size: 0.85rem;
+  font-size: 1.05rem;
   color: var(--text-muted);
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 /* ---------------------------------------------------------------------------
@@ -295,12 +423,11 @@
 
 .footer {
   margin-top: auto;
-  padding: 16px 40px;
-  font-size: 0.72rem;
+  padding: 20px 40px;
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--text-faint);
   text-align: center;
   width: 100%;
-  border-top: 1px solid rgba(30,34,53,0.8);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
+

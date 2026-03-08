@@ -29,8 +29,12 @@ if (!rootElement) {
 //   - Components are rendered twice to detect side effects
 //   - Deprecated API usages are flagged with console warnings
 // These checks are stripped out in production builds automatically.
+import { BrowserRouter } from 'react-router-dom';
+
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </StrictMode>
 );
