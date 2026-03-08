@@ -137,6 +137,7 @@
       display: grid;
       gap: 12px 20px;        /* row-gap col-gap */
       align-items: start;    /* cells don't stretch to fill row height */
+      justify-content: center; /* center the columns horizontally in the panel */
       width: 100%;
     }
 
@@ -147,8 +148,30 @@
       border-radius: 6px;
       border: 1px solid #1e2235;
       background: #0f1117;
+      text-align: center;    /* match KaTeX's default centering so text and math align consistently */
     }
     .grid-cell:empty { display: none; }
+
+    /* Tables rendered from Markdown inside a grid cell. */
+    .grid-cell table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9em;
+    }
+    .grid-cell th,
+    .grid-cell td {
+      border: 1px solid #2d3148;
+      padding: 5px 10px;
+      text-align: left;
+    }
+    .grid-cell th {
+      background: #1a1d2e;
+      color: #c7d2fe;
+      font-weight: 600;
+    }
+    .grid-cell tr:nth-child(even) td {
+      background: #0d0f1a;  /* subtle zebra stripe for readability */
+    }
 
     #empty-notes {
       color: #4b5563;
@@ -288,24 +311,42 @@
 
   // ---- Math protection helpers ----
   // marked.js runs BEFORE KaTeX and mangles LaTeX in two ways:
-  //   1. \\ (matrix row separator) → \ — rows collapse
-  //   2. | characters → Markdown table syntax — matrices become lists
+  //   1. \\ (matrix row separator) → \ — rows collapse, matrix loses structure
+  //   2. | characters → Markdown table syntax — matrix columns become table cells
   //
-  // Fix: extract all math blocks BEFORE marked.parse(), replace with placeholders,
-  // let marked do its Markdown work, then restore the original LaTeX for KaTeX.
+  // Fix: extract ALL math blocks before marked.parse(), replacing them with
+  // opaque placeholders. marked.js never sees the raw LaTeX, so it can't mangle
+  // \\ or | inside math. After marked runs, we restore the placeholders and let
+  // KaTeX render them.
+  //
+  // Tables are now supported: because math is extracted first, any | that
+  // marked.js sees is a genuine markdown table column, not LaTeX notation.
 
   function extractMath(md) {
     const blocks = [];
-    // $$...$$ first so we don't split $$ into two separate $ matches.
-    md = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
-      blocks.push({ display: true, math });
+
+    // Helper that records a math block and returns its placeholder token.
+    const placeholder = (display, math) => {
+      blocks.push({ display, math });
       return `MATHPLACEHOLDER${blocks.length - 1}END`;
-    });
-    // $...$ — [^\n$]+ prevents crossing line boundaries.
-    md = md.replace(/\$([^\n$]+?)\$/g, (_, math) => {
-      blocks.push({ display: false, math });
-      return `MATHPLACEHOLDER${blocks.length - 1}END`;
-    });
+    };
+
+    // 1. \[...\] display math — some versions of Gemini use this even when
+    //    told not to. Must be extracted before $$ to avoid double-matching.
+    md = md.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => placeholder(true,  math));
+
+    // 2. \(...\) inline math — same fallback handling.
+    md = md.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => placeholder(false, math));
+
+    // 3. $$...$$ display math — extract before $...$ so $$ isn't split into
+    //    two separate $ matches.
+    md = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => placeholder(true,  math));
+
+    // 4. $...$ inline math — [\s\S]+? allows the content to span lines
+    //    (needed for multi-line inline expressions) while still being non-greedy.
+    //    We use a negative lookahead to avoid matching $$ as two $ delimiters.
+    md = md.replace(/\$(?!\$)([\s\S]+?)\$/g, (_, math) => placeholder(false, math));
+
     return { safeMd: md, blocks };
   }
 
@@ -322,8 +363,10 @@
     el.innerHTML = restoreMath(marked.parse(safeMd), blocks);
     renderMathInElement(el, {
       delimiters: [
-        { left: '$$', right: '$$', display: true  },
-        { left: '$',  right: '$',  display: false }
+        { left: '\\[', right: '\\]', display: true  },
+        { left: '$$',  right: '$$',  display: true  },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '$',   right: '$',   display: false }
       ],
       throwOnError: false
     });
@@ -345,7 +388,7 @@
     }
 
     const cells   = parsed.cells;
-    const columns = parsed.columns || 3;
+    const columns = parsed.columns || [1, 1, 1];
     if (!Array.isArray(cells)) return;
 
     // Hide the "Waiting…" placeholder once we have real content.
@@ -357,19 +400,34 @@
     const grid = document.createElement('div');
     grid.className = 'whiteboard-grid';
     // Apply Gemini's chosen column count dynamically.
-    grid.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+    // max-content sizes each column to exactly the width of its widest cell —
+    // no stretching, no extra whitespace. The columns array from Gemini still
+    // controls how many columns exist and where each cell is placed; we just
+    // don't use the weight values to stretch columns beyond their content.
+    grid.style.gridTemplateColumns = columns.map(() => 'max-content').join(' ');
 
-    cells.forEach(({ row, col, colSpan = 1, content }) => {
+    // fontSize tokens Gemini may output → actual CSS values.
+    const fontSizeMap = {
+      small:  '0.8rem',
+      normal: '1rem',
+      large:  '1.2rem',
+      xlarge: '1.5rem',
+    };
+
+    cells.forEach(({ row, col, colSpan = 1, content, style = {} }) => {
       const cell = document.createElement('div');
       cell.className = 'grid-cell';
 
-      // CSS grid placement: grid-row and grid-column tell the browser exactly
-      // which cell this content belongs in. "span N" means it stretches across
-      // N column tracks, letting wide content (like a title) fill the full width.
+      // Grid placement — where this cell lives in the layout.
       cell.style.gridRow    = row;
       cell.style.gridColumn = `${col} / span ${colSpan}`;
 
-      // Render Markdown+LaTeX content inside the cell using our existing pipeline.
+      // Apply Gemini's style hints. Each property is optional; we only set it
+      // if Gemini included it, so cells with no style object are unaffected.
+      if (style.justifySelf) cell.style.justifySelf = style.justifySelf;
+      if (style.fontWeight)  cell.style.fontWeight  = style.fontWeight;
+      if (style.fontSize)    cell.style.fontSize    = fontSizeMap[style.fontSize] || style.fontSize;
+
       renderContent(cell, content || '');
       grid.appendChild(cell);
     });

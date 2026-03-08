@@ -277,8 +277,9 @@ def on_frame(frame: np.ndarray) -> None:
         proposed       = json.loads(updated_notes)    if updated_notes   else {}
         current_cells  = current.get("cells",   [])
         proposed_cells = proposed.get("cells",   [])
-        # Always use Gemini's latest column count — it may rearrange the layout.
-        columns        = proposed.get("columns", current.get("columns", 3))
+        # columns is now an array of proportional weights, e.g. [1, 2, 1].
+        # Fall back to three equal columns if Gemini omitted it.
+        columns        = proposed.get("columns", current.get("columns", [1, 1, 1]))
     except (json.JSONDecodeError, AttributeError):
         return
 

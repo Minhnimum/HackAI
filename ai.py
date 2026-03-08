@@ -28,7 +28,7 @@ JPEG_QUALITY = 100
 # (smaller = faster API upload) and image clarity (higher = Gemini reads text better).
 # Below ~70 the compression artifacts can make handwritten text hard to read.
 
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_MODEL = "gemini-2.5-flash"
 # The specific Gemini model to use for vision. "gemini-2.5-flash" is Google's
 # best price-to-performance model as of 2026. It handles images + text prompts
 # in a single call and returns a text response.
@@ -88,44 +88,34 @@ def analyze_whiteboard(
     current_notes: str = "",
 ) -> str:
     """
-    Send a whiteboard camera frame + the current grid state to Gemini and get
-    back an updated JSON grid that preserves the 2D spatial layout of the board.
+    Send a whiteboard camera frame + the current layout to Gemini and get back
+    an updated JSON layout using a coordinate system instead of a grid.
 
     OUTPUT FORMAT — a JSON string with this shape:
         {
           "cells": [
-            { "row": 1, "col": 1, "colSpan": 3, "content": "## Title" },
-            { "row": 2, "col": 1,                "content": "$F = ma$" },
-            { "row": 2, "col": 2,                "content": "$E = mc^2$" }
+            { "x": 5,  "y": 5,  "width": 50, "content": "## Title" },
+            { "x": 5,  "y": 25, "width": 30, "content": "$F = ma$" },
+            { "x": 40, "y": 25, "width": 30, "content": "$E = mc^2$" }
           ]
         }
 
-    The whiteboard is divided into a 3-column grid (left / center / right thirds)
-    and as many rows as needed (top to bottom). Each piece of content is placed
-    in the cell that matches where it physically appears on the board.
+    x, y, width are all percentages (0–100) of the board's dimensions:
+      x=0 is the left edge, x=100 is the right edge.
+      y=0 is the top edge,  y=100 is the bottom edge.
+      width is how much horizontal space the content occupies.
 
-    Why JSON grid instead of Markdown?
-        Markdown is linear — it can only express top-to-bottom order. Whiteboards
-        are 2D. A professor might write two equations side by side, or put a
-        definition on the left and an example on the right. A JSON grid lets us
-        preserve that spatial relationship and render it faithfully in the browser
-        using CSS grid layout.
-
-    Merge strategy (same four rules as before):
-        1. ADD   — new content visible on the board, not yet in the grid.
-        2. UPDATE — cells whose content changed (e.g., "5+3" → "5+3=8").
-        3. PRESERVE — cells not currently visible (professor may be blocking them).
-        4. REMOVE — cells only if the content was clearly erased (clean whiteboard
-                    where it used to be, not just a person standing in front).
+    This is more precise than a row/col grid because content can be placed
+    at any position, not just snapped to column boundaries.
 
     Args:
         gemini_client:  An authenticated genai.Client instance, created at startup.
         frame:          Current camera frame as a numpy array (BGR, from OpenCV).
-        current_notes:  The JSON grid string from the previous capture, or "" on
-                        the first call.
+        current_notes:  The JSON coordinate string from the previous capture, or ""
+                        on the first call.
 
     Returns:
-        A JSON string (the updated grid). Returns current_notes unchanged if
+        A JSON string (the updated layout). Returns current_notes unchanged if
         Gemini's response is missing or cannot be parsed as valid JSON.
     """
     # Step 1: Compress the raw pixel frame into JPEG bytes for the API call.
@@ -152,22 +142,36 @@ def analyze_whiteboard(
         "EXCEPTION: If a person or object is physically blocking part of the board, you "
         "cannot confirm what is behind them. For any cells that might be hidden behind "
         "an obstruction, include them in your output unchanged — do not delete them.\n\n"
-        "SPATIAL GRID RULES — this is the most important section:\n"
-        "The board is divided into a grid. You must map each piece of content to the\n"
-        "grid cell that matches its PHYSICAL LOCATION on the board.\n\n"
-        "COLUMNS (left ↔ right):\n"
-        "- First decide how many columns fit the layout (1–6). Set this as 'columns'.\n"
-        "- Divide the board width into that many equal vertical strips.\n"
-        "- Content in the LEFTMOST strip → col 1. Next strip → col 2. And so on.\n"
-        "- Two pieces of content side-by-side on the board MUST have different col values.\n"
-        "- Two pieces of content stacked vertically (one above the other) MUST have the SAME col value.\n\n"
-        "ROWS (top ↔ bottom):\n"
-        "- Row 1 is the TOP of the board. Higher row numbers are lower on the board.\n"
-        "- Two pieces of content at the same height on the board MUST have the same row value.\n"
-        "- Content that is physically ABOVE other content MUST have a lower row number.\n"
-        "- Example: a formula written above a label → formula gets row 1, label gets row 2,\n"
-        "  and both get the same col (the column matching their horizontal position).\n\n"
-        "colSpan: use when a single piece of content physically spans multiple column zones.\n\n"
+        "CSS GRID LAYOUT — your output is rendered directly in a browser CSS grid.\n"
+        "Understanding this is essential for correct spatial placement.\n\n"
+        "HOW THE GRID WORKS:\n"
+        "  COLUMNS — vertical strips running top to bottom across the board.\n"
+        "    col 1 = leftmost strip. col 2 = next strip to the right. And so on.\n"
+        "    Every cell in the same column shares the same LEFT EDGE (vertically aligned).\n"
+        "    You control column widths via the 'columns' weight array.\n\n"
+        "  ROWS — horizontal bands running left to right across the board.\n"
+        "    row 1 = topmost band. row 2 = next band down. And so on.\n"
+        "    Every cell in the same row shares the same TOP EDGE (horizontally aligned).\n\n"
+        "  colSpan — stretches a cell across multiple adjacent columns.\n\n"
+        "STEP-BY-STEP PLACEMENT:\n"
+        "  1. Count the natural vertical zones on the board and set 'columns' to an\n"
+        "     array of that length, e.g. three zones → [1,1,1], two zones → [1,1].\n"
+        "     Column widths are auto-sized to content in the browser — the values in\n"
+        "     the array only determine the number of columns, not their widths.\n"
+        "  2. Assign col: which vertical zone does each item fall in?\n"
+        "  3. Assign row: which horizontal band? Higher on board = lower row number.\n"
+        "     Items at the SAME HEIGHT must share the same row number.\n"
+        "     Items STACKED VERTICALLY must share the same col number.\n\n"
+        "CELL STYLING — each cell can carry a 'style' object with these properties:\n"
+        "  justifySelf: 'start' | 'center' | 'end'\n"
+        "               Controls where the cell box sits inside its column track.\n"
+        "               Use 'center' when content is centered within a zone.\n"
+        "               Use 'end' when content is pushed to the right edge of its zone.\n"
+        "  fontWeight:  'normal' | 'bold'   — use bold for titles or key terms.\n"
+        "  fontSize:    'small' | 'normal' | 'large' | 'xlarge'\n"
+        "               Match the relative physical size of the writing.\n\n"
+        "All style properties are optional. Only include them when they improve accuracy.\n\n"
+        "You may rearrange the entire grid between frames if a better layout becomes apparent.\n\n"
         "WHAT TO RETURN:\n"
         "1. All text currently visible on the board.\n"
         "2. Cells behind a person/obstruction: copy them from the current grid unchanged.\n"
@@ -182,12 +186,29 @@ def analyze_whiteboard(
         "- Use ## for section headers\n"
         "- Use bullet points, numbered lists, and code blocks where appropriate\n"
         "- Convert ALL math to LaTeX: inline $...$, display $$...$$\n"
-        "- Use only $ and $$ delimiters — not \\( \\) or \\[ \\]\n\n"
+        "- Use only $ and $$ delimiters — not \\( \\) or \\[ \\]\n"
+        "- TABLES: if the whiteboard contains a table (rows and columns of data), render it\n"
+        "  as a Markdown table inside a single cell. Use standard GFM syntax:\n"
+        "    | Header 1 | Header 2 |\n"
+        "    |----------|----------|\n"
+        "    | value    | value    |\n"
+        "  Give the table cell a colSpan wide enough to fill its physical area on the board.\n"
+        "  Math inside table cells is allowed — wrap it in $ as usual.\n\n"
         "OUTPUT: Return ONLY valid JSON — no explanation, no markdown fences.\n"
-        "Schema: {\"columns\": int, \"cells\": [{\"row\": int, \"col\": int, \"colSpan\": int, \"content\": str}]}\n"
-        "columns: total number of grid columns you chose (1–6). Required.\n"
+        "Schema: {\n"
+        "  \"columns\": [int, ...],\n"
+        "  \"cells\": [{\n"
+        "    \"row\": int,\n"
+        "    \"col\": int,\n"
+        "    \"colSpan\": int,\n"
+        "    \"content\": str,\n"
+        "    \"style\": { \"justifySelf\": str, \"fontWeight\": str, \"fontSize\": str }\n"
+        "  }]\n"
+        "}\n"
+        "columns: required array of proportional weights, e.g. [1,1,1] or [1,2,1].\n"
         "colSpan: optional, defaults to 1.\n"
-        "If the board is completely blank with no writing: {\"columns\": 1, \"cells\": []}"
+        "style: optional object — only include keys that improve spatial accuracy.\n"
+        "If the board is completely blank: {\"columns\": [1], \"cells\": []}"
     )
 
     # Step 3: Wrap the JPEG bytes in a types.Part so Gemini receives the image.
@@ -220,9 +241,16 @@ def analyze_whiteboard(
         parsed = json.loads(raw)
         if "cells" not in parsed or not isinstance(parsed["cells"], list):
             return current_notes
-        # Default columns to 3 if Gemini omitted it.
-        if "columns" not in parsed or not isinstance(parsed["columns"], int):
-            parsed["columns"] = 3
+        # Validate and normalise the columns field.
+        # Gemini should return an array like [1, 2, 1], but may return an int
+        # (old format) or omit it entirely. We coerce both to a valid array.
+        cols = parsed.get("columns")
+        if isinstance(cols, int):
+            # Old format — treat as N equal-weight columns.
+            parsed["columns"] = [1] * max(cols, 1)
+            raw = json.dumps(parsed)
+        elif not isinstance(cols, list) or len(cols) == 0:
+            parsed["columns"] = [1, 1, 1]
             raw = json.dumps(parsed)
     except json.JSONDecodeError:
         return current_notes

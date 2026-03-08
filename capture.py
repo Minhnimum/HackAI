@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-CAMERA_INDEX = 2          # External webcam (index confirmed via enumeration)
-FRAME_INTERVAL = 3.0      # Seconds between whiteboard captures
+CAMERA_INDEX = 1          # External webcam (re-enumerated — was 2, now 1)
+FRAME_INTERVAL = 2.0      # Seconds to wait after each Gemini call before capturing the next frame
 
 SAMPLE_RATE = 16000       # Hz — ElevenLabs expects 16 kHz for speech transcription
 AUDIO_CHANNELS = 1
@@ -82,7 +82,7 @@ def start_camera_loop(
             cap = cv2.VideoCapture(camera_index)
             if not cap.isOpened():
                 return None
-            time.sleep(2.0)  # warmup — wait for USB camera to be ready
+            time.sleep(1.0)  # warmup — wait for USB camera to be ready
             return cap
 
         cap = open_camera()
@@ -123,6 +123,7 @@ def start_camera_loop(
                     on_frame(frame)
                 except Exception:
                     logger.exception("Error in on_frame callback")
+                time.sleep(FRAME_INTERVAL)  # pace Gemini calls to one every 2 seconds
         finally:
             cap.release()
 
