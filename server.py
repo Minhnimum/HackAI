@@ -24,11 +24,15 @@ from pathlib import Path
 import numpy as np
 import uvicorn
 from dotenv import load_dotenv
+import base64
+from io import BytesIO
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
+from PIL import Image
 from pydantic import BaseModel
 
 from ai import analyze_whiteboard, answer_question
@@ -482,6 +486,67 @@ async def chat_endpoint(body: ChatRequest) -> dict:
     return {"answer": answer}
 
 
+# ---------------------------------------------------------------------------
+# Canvas chat
+# ---------------------------------------------------------------------------
+
+class CanvasChatRequest(BaseModel):
+    """
+    The JSON body expected by POST /api/canvas-chat.
+
+    Attributes:
+        message:           The student's message or question about their drawing.
+        image_base64:      Optional base64-encoded JPEG of the current canvas state.
+        attachment_base64:  Optional base64-encoded image the student attached.
+    """
+    image_base64: str | None = None
+    message: str
+    attachment_base64: str | None = None
+
+
+@app.post("/api/canvas-chat")
+async def canvas_chat(request: CanvasChatRequest):
+    """
+    Receive the drawing from the canvas and a user message, and query Gemini.
+
+    The canvas page captures all Fabric.js pages into a single merged image,
+    base64-encodes it, and sends it along with the student's text message.
+    This endpoint decodes the image, passes both image + text to Gemini,
+    and returns the AI's response.
+    """
+    try:
+        contents = [request.message]
+
+        # Decode the base64 canvas image (if drawings exist)
+        if request.image_base64:
+            img_data = request.image_base64
+            if "," in img_data:
+                img_data = img_data.split(",")[1]
+            img_bytes = base64.b64decode(img_data)
+            img = Image.open(BytesIO(img_bytes))
+            contents.insert(0, img)
+            contents.insert(0, "This is the current state of the user's drawing canvas:")
+
+        # Decode the attached image (if any)
+        if request.attachment_base64:
+            att_data = request.attachment_base64
+            if "," in att_data:
+                att_data = att_data.split(",")[1]
+            att_bytes = base64.b64decode(att_data)
+            att_img = Image.open(BytesIO(att_bytes))
+            contents.insert(0, att_img)
+            contents.insert(0, "This is the image file the user attached to their message:")
+
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+        )
+        return {"response": response.text}
+    except Exception as e:
+        logger.exception("Canvas Chat Error")
+        return {"error": str(e)}
+
+
 @app.get("/")
 async def index():
     """
@@ -499,6 +564,18 @@ async def index():
         return FileResponse(dist_index)
     # Fallback: original vanilla JS frontend (still works if dist/ doesn't exist)
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/canvas")
+async def canvas():
+    """
+    Serve the AI Canvas Mode page at /canvas.
+
+    This is a standalone page with a Fabric.js drawing canvas and an AI
+    assistant sidebar. Students can draw/write on the canvas and ask Gemini
+    questions about their work.
+    """
+    return FileResponse(STATIC_DIR / "canvas.html")
 
 
 @app.get("/{full_path:path}")
