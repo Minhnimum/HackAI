@@ -1,0 +1,27 @@
+/*
+ * App.module.css — Layout for the root component.
+ *
+ * CSS Modules: class names in this file are automatically scoped to this
+ * component — Vite renames them to something like "layout_a1b2c3" so they
+ * can't accidentally clash with classes in other files. In the component,
+ * you access them via `styles.layout`, `styles.main`, etc.
+ */
+
+/* Fill the entire viewport height and stack children top-to-bottom.
+   flex-direction: column is needed because flexbox defaults to row. */
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* The main content area holds the two panels side by side.
+   flex: 1 means it takes all remaining height after the header.
+   overflow: hidden prevents the main area from growing beyond the viewport —
+   each panel manages its own internal scrolling. */
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}

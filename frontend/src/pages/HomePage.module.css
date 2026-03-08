@@ -1,0 +1,306 @@
+/*
+ * HomePage.module.css — EchoBoard landing page styles.
+ *
+ * Palette: dark base (#0f1117), indigo accent (#6366f1), near-white text.
+ * Tone: calm and academic, not startup-flashy.
+ */
+
+:root {
+  --bg:           #0f1117;
+  --surface:      #13151f;
+  --border:       #1e2235;
+  --indigo:       #6366f1;
+  --indigo-light: #a5b4fc;
+  --indigo-dim:   #2e3069;
+  --green:        #22c55e;
+  --yellow:       #eab308;
+  --red:          #ef4444;
+  --text-primary: #dde1ef;
+  --text-muted:   #5a637a;
+  --text-faint:   #2d3350;
+}
+
+/* ---------------------------------------------------------------------------
+   Page
+--------------------------------------------------------------------------- */
+
+.page {
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: rise 0.4s ease both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------------------------------------------------------------------------
+   Top bar
+--------------------------------------------------------------------------- */
+
+.topBar {
+  width: 100%;
+  max-width: 1060px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 40px;
+}
+
+.wordmark {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--indigo-light);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------------------
+   Status badge — shared between top bar and hero
+--------------------------------------------------------------------------- */
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  transition: color 0.3s, border-color 0.3s, background 0.3s;
+}
+
+.statusBadgeLarge {
+  font-size: 0.85rem;
+  padding: 7px 16px;
+}
+
+.statusBadge[data-status="live"] {
+  background: rgba(34, 197, 94, 0.07);
+  border-color: rgba(34, 197, 94, 0.28);
+  color: var(--green);
+}
+.statusBadge[data-status="connecting"] {
+  background: rgba(234, 179, 8, 0.07);
+  border-color: rgba(234, 179, 8, 0.28);
+  color: var(--yellow);
+}
+.statusBadge[data-status="error"] {
+  background: rgba(239, 68, 68, 0.07);
+  border-color: rgba(239, 68, 68, 0.28);
+  color: var(--red);
+}
+
+.pulseDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.statusBadge[data-status="live"] .pulseDot {
+  animation: dot 2.4s ease-in-out infinite;
+}
+
+@keyframes dot {
+  0%, 100% { opacity: 1;   transform: scale(1);   }
+  50%       { opacity: 0.4; transform: scale(1.5); }
+}
+
+/* ---------------------------------------------------------------------------
+   Hero
+--------------------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  min-height: 55vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 40px 40px;
+}
+
+/* Soft radial glow — indigo halo behind the title */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 50% at 50% 42%, rgba(99,102,241,0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero > * { position: relative; }
+
+/* Small uppercase label above the main title */
+.eyebrow {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--indigo);
+  margin-bottom: 18px;
+  opacity: 0.9;
+}
+
+/* Gradient title — white fading into soft indigo */
+.heroTitle {
+  font-size: clamp(2rem, 5.5vw, 3.5rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin-bottom: 20px;
+  background: linear-gradient(150deg, #ffffff 20%, #c7d0ff 65%, #a5b4fc 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.heroSubtitle {
+  font-size: 1rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+  max-width: 460px;
+  margin-bottom: 36px;
+}
+
+/* Badge and CTA sit side by side */
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ---------------------------------------------------------------------------
+   Join button
+--------------------------------------------------------------------------- */
+
+.joinButton {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  padding: 11px 28px;
+  border-radius: 9px;
+  color: #fff;
+  background: linear-gradient(135deg, #4f52c5 0%, #6366f1 60%, #7c3aed 100%);
+  background-size: 200% auto;
+  transition: background-position 0.3s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 2px 12px rgba(99,102,241,0.25);
+}
+
+.joinButton:hover {
+  background-position: right center;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(99,102,241,0.4);
+}
+
+.joinButton:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 6px rgba(99,102,241,0.2);
+}
+
+/* ---------------------------------------------------------------------------
+   Divider between hero and cards
+--------------------------------------------------------------------------- */
+
+.divider {
+  width: 100%;
+  max-width: 1060px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border) 30%, var(--border) 70%, transparent);
+  margin-bottom: 48px;
+}
+
+/* ---------------------------------------------------------------------------
+   Feature grid
+--------------------------------------------------------------------------- */
+
+.featureGrid {
+  width: 100%;
+  max-width: 960px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 0 40px 56px;
+}
+
+.featureCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.featureCard:hover {
+  transform: translateY(-3px);
+  border-color: var(--indigo-dim);
+  box-shadow: 0 8px 32px rgba(99,102,241,0.1);
+}
+
+/* Icon area — small rounded square */
+.cardIcon {
+  font-size: 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(99,102,241,0.08);
+  border: 1px solid rgba(99,102,241,0.15);
+  border-radius: 9px;
+  color: var(--indigo-light);
+}
+
+.cardTitle {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--indigo-light);
+  letter-spacing: 0.01em;
+}
+
+.cardBody {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------------------------
+   Footer
+--------------------------------------------------------------------------- */
+
+.footer {
+  margin-top: auto;
+  padding: 16px 40px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  text-align: center;
+  width: 100%;
+  border-top: 1px solid rgba(30,34,53,0.8);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

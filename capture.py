@@ -233,7 +233,19 @@ def start_streaming_audio_loop(
                   so the UI can show in-progress text in real time.
                 - committed_transcript: The final, stable result after VAD detects
                   a pause. This replaces the partial text in the UI.
+
+                Deduplication note:
+                  ElevenLabs fires committed_transcript TWICE per segment — once
+                  immediately when VAD commits (raw text) and again after a
+                  refinement pass (punctuation/capitalisation corrected). Both
+                  events carry the same integer event_id. We track seen IDs and
+                  skip the second firing so the transcript doesn't double up.
                 """
+                # Set of event_id integers we have already processed.
+                # Using a set gives O(1) lookup so it never slows down even
+                # for very long sessions.
+                seen_event_ids: set[int] = set()
+
                 async for raw in ws:
                     data = json.loads(raw)
                     msg_type = data.get("message_type")
@@ -241,6 +253,13 @@ def start_streaming_audio_loop(
                     if msg_type == "partial_transcript" and text:
                         on_partial(text)
                     elif msg_type == "committed_transcript" and text:
+                        event_id = data.get("event_id")
+                        if event_id is not None:
+                            if event_id in seen_event_ids:
+                                # This is the refinement pass for a segment we
+                                # already forwarded — skip to avoid duplicates.
+                                continue
+                            seen_event_ids.add(event_id)
                         on_transcript(text)
 
             # Run sender and receiver concurrently. gather() runs both coroutines

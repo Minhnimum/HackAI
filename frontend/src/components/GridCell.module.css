@@ -1,0 +1,12 @@
+/* GridCell.module.css — A single content region in the whiteboard grid */
+
+.cell {
+  min-width: 0;         /* Prevent grid blowout from wide equations */
+  padding: 2px 0 10px;
+  background: transparent;
+  text-align: left;
+}
+
+.cell:empty {
+  display: none;
+}

@@ -1,0 +1,54 @@
+{
+  "compilerOptions": {
+    // "target" is the JavaScript version TypeScript compiles down to.
+    // ES2020 is widely supported and gives us async/await, optional chaining, etc.
+    "target": "ES2020",
+
+    "useDefineForClassFields": true,
+
+    // "lib" lists which built-in browser/JS APIs TypeScript knows about.
+    // DOM gives us window, document, WebSocket, etc.
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+
+    // "module" controls how imports are compiled.
+    // ESNext keeps them as ES modules, which Vite understands natively.
+    "module": "ESNext",
+
+    // Skip type checking for node_modules. This is safe and speeds up compilation
+    // significantly — library authors are responsible for their own types.
+    "skipLibCheck": true,
+
+    // "bundler" mode trusts the bundler (Vite) to resolve modules rather than
+    // requiring TypeScript to resolve them itself. Required when using Vite.
+    "moduleResolution": "bundler",
+
+    // Allow importing TypeScript files with their .ts extension (Vite handles this).
+    "allowImportingTsExtensions": true,
+
+    // Each file is compiled independently. Required for Vite's fast transform pipeline.
+    "isolatedModules": true,
+
+    // Detect files as modules even without import/export statements.
+    "moduleDetection": "force",
+
+    // Don't emit JS files — Vite handles the actual compilation.
+    "noEmit": true,
+
+    // "react-jsx" means JSX is compiled to React.createElement calls using the
+    // new JSX transform, which doesn't require `import React from 'react'` in
+    // every file.
+    "jsx": "react-jsx",
+
+    // Strict mode enables a bundle of safety checks:
+    // - No implicit 'any' types
+    // - Strict null checks (null and undefined are not assignable to other types)
+    // - And several others. Highly recommended for catching bugs early.
+    "strict": true,
+
+    // Warn about variables and parameters that are declared but never used.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}

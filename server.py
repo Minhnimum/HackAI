@@ -25,11 +25,13 @@ import numpy as np
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
+from pydantic import BaseModel
 
-from ai import analyze_whiteboard
+from ai import analyze_whiteboard, answer_question
 from capture import start_camera_loop, start_streaming_audio_loop
 
 # ---------------------------------------------------------------------------
@@ -146,11 +148,45 @@ async def lifespan(app: FastAPI):
 # and shutdown" instead of the old @app.on_event decorators.
 app = FastAPI(title="Lecture Capture System", lifespan=lifespan)
 
-# Tell FastAPI to serve files from the "static" folder.
-# Path(__file__).parent finds the directory this script lives in,
-# then we append "static" to get the full path to our HTML file.
+# ---------------------------------------------------------------------------
+# CORS middleware (for Vite dev server)
+# ---------------------------------------------------------------------------
+# CORS (Cross-Origin Resource Sharing) is a browser security policy that
+# blocks JavaScript on one origin (e.g. localhost:5173) from fetching
+# resources from a different origin (e.g. localhost:8000).
+#
+# During development, the React app runs on Vite's port 5173, but the
+# WebSocket server is on port 8000. Without CORS headers, the browser would
+# block the WebSocket connection. This middleware adds the necessary headers.
+#
+# In production (npm run build → python server.py), React is served directly
+# by FastAPI on port 8000, so both origins are the same and CORS isn't needed.
+# The middleware is harmless in production.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Vite's default dev server port
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# Static file directories
+# ---------------------------------------------------------------------------
+# DIST_DIR is where `npm run build` (inside the frontend/ folder) outputs the
+# compiled React app. It doesn't exist until you run the build command.
+# STATIC_DIR is the original plain HTML fallback, used if the build hasn't run.
+DIST_DIR   = Path(__file__).parent / "frontend" / "dist"
 STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Mount Vite's compiled asset files (/assets/*.js, /assets/*.css).
+# Vite always outputs JS and CSS to a subfolder called "assets/" inside dist/.
+# We mount that subfolder at the /assets URL path so the browser can fetch them.
+#
+# This mount must be registered BEFORE the catch-all @app.get("/{full_path}")
+# route below, or FastAPI would intercept /assets/... requests and return
+# index.html instead of the actual JS/CSS files.
+if DIST_DIR.exists() and (DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
 
 # ---------------------------------------------------------------------------
 # Shared state
@@ -179,6 +215,36 @@ gemini_client: genai.Client | None = None
 # A reference to the main asyncio event loop. Background threads need this
 # to safely schedule async functions (like broadcast) from non-async code.
 _main_loop: asyncio.AbstractEventLoop | None = None
+
+# ---------------------------------------------------------------------------
+# Lecture event log
+# ---------------------------------------------------------------------------
+# A chronological record of every speech segment and whiteboard change that
+# occurred during this session. This is used by the /api/chat endpoint to
+# give Gemini full lecture context when answering student questions.
+#
+# Each entry is one of:
+#   {"time": "14:32:07", "type": "speech",     "text":    "...sentence..."}
+#   {"time": "14:32:15", "type": "whiteboard", "content": "{...json...}"}
+lecture_events: list[dict] = []
+
+
+# ---------------------------------------------------------------------------
+# Chat request model
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    """
+    The JSON body expected by POST /api/chat.
+
+    Pydantic models are used by FastAPI to automatically parse and validate
+    the request body. If a required field is missing or the wrong type,
+    FastAPI returns a 422 error automatically — no manual validation needed.
+
+    Attributes:
+        question: The student's question about the lecture content.
+    """
+    question: str
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +365,14 @@ def on_frame(frame: np.ndarray) -> None:
             "full": whiteboard_notes,
         })
         logger.info("Whiteboard updated (%d cells)", len(proposed_cells))
+
+        # Record this whiteboard change in the lecture event log so students
+        # can ask questions about specific board states via /api/chat.
+        lecture_events.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "type": "whiteboard",
+            "content": whiteboard_notes,
+        })
     else:
         logger.info("Whiteboard unchanged — no broadcast needed")
 
@@ -332,6 +406,15 @@ def on_transcript_text(text: str) -> None:
 
     transcript = (transcript + " " + text).strip()
 
+    # Record this committed speech segment in the lecture event log.
+    # Only committed segments (full sentences) are logged — not partials —
+    # because partials change rapidly and the final committed text is what matters.
+    lecture_events.append({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "type": "speech",
+        "text": text,
+    })
+
     broadcast_sync({
         "type": "transcript",
         "delta": text,
@@ -344,15 +427,103 @@ def on_transcript_text(text: str) -> None:
 # HTTP routes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Chat helpers
+# ---------------------------------------------------------------------------
+
+def _build_context() -> str:
+    """
+    Format the lecture event log into a single chronological context string
+    to pass to Gemini when answering a student's question.
+
+    Each line is prefixed with a timestamp and the event type (SPEECH or
+    WHITEBOARD) so Gemini can reason about the sequence of events during class.
+
+    Returns:
+        A multi-line string like:
+          [14:30:00] WHITEBOARD: {"columns": [...], "cells": [...]}
+          [14:30:22] SPEECH: "So as we can see from this equation..."
+        Returns a message saying the session just started if there are no events yet.
+    """
+    if not lecture_events:
+        return "(No lecture content captured yet — the session may have just started.)"
+
+    lines = []
+    for event in lecture_events:
+        timestamp = event["time"]
+        if event["type"] == "speech":
+            lines.append(f"[{timestamp}] SPEECH: {event['text']}")
+        elif event["type"] == "whiteboard":
+            lines.append(f"[{timestamp}] WHITEBOARD: {event['content']}")
+    return "\n".join(lines)
+
+
+@app.post("/api/chat")
+async def chat_endpoint(body: ChatRequest) -> dict:
+    """
+    Answer a student's question using the full lecture context captured so far.
+
+    Accepts a JSON body like {"question": "What is Newton's second law?"}.
+    Builds a chronological lecture log from lecture_events, sends it to Gemini
+    with the student's question, and returns Gemini's answer.
+
+    Args:
+        body: A ChatRequest Pydantic model automatically parsed from the JSON body.
+
+    Returns:
+        A dict like {"answer": "..."} — FastAPI serialises this to JSON automatically.
+    """
+    context = _build_context()
+    try:
+        answer = answer_question(gemini_client, context, body.question)
+    except Exception:
+        logger.exception("Chat Gemini call failed")
+        answer = "Sorry, I couldn't process your question right now. Please try again."
+    return {"answer": answer}
+
+
 @app.get("/")
 async def index():
     """
-    Serve the student-facing HTML page at the root URL (http://localhost:8000).
+    Serve the student-facing page at the root URL (http://localhost:8000).
+
+    Prefers the Vite-built React app (frontend/dist/index.html) when it exists.
+    Falls back to the original static/index.html if the build hasn't been run yet.
 
     FileResponse sends the file contents as the HTTP response. The browser
-    receives index.html and renders it, then the JavaScript in that file
-    immediately opens a WebSocket connection back to /ws.
+    receives index.html and renders it. For the React app, the HTML is just a
+    shell that loads the compiled JavaScript bundle, which mounts the app.
     """
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.exists():
+        return FileResponse(dist_index)
+    # Fallback: original vanilla JS frontend (still works if dist/ doesn't exist)
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """
+    Catch-all route: serve index.html for any URL the server doesn't recognize.
+
+    This is required for Single Page Applications (SPAs) like our React app.
+    In a SPA, React handles routing in the browser (client-side routing). If a
+    student bookmarks or refreshes a URL like /notes/session-1, the browser
+    sends a GET request for that path to the server. Without this catch-all,
+    FastAPI would return a 404 because it doesn't know about /notes/session-1.
+    With this catch-all, the server returns index.html and React takes over,
+    reading the URL and rendering the right content.
+
+    The {full_path:path} parameter captures everything after the leading /,
+    including slashes. We ignore it — our job is just to return the SPA shell.
+
+    Note: FastAPI evaluates routes in registration order. The /assets mount and
+    /ws WebSocket endpoint are registered first, so they are matched before this
+    catch-all. This catch-all only fires for paths that nothing else matched.
+    """
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.exists():
+        return FileResponse(dist_index)
     return FileResponse(STATIC_DIR / "index.html")
 
 

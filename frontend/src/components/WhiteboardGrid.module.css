@@ -1,0 +1,9 @@
+/* WhiteboardGrid.module.css — CSS grid for the whiteboard layout */
+
+.grid {
+  display: grid;
+  gap: 8px 32px;          /* 8px between rows, 32px between columns */
+  align-items: start;     /* Don't stretch cells to fill their row's height */
+  justify-content: start; /* Content anchors to the left like real board writing */
+  width: 100%;
+}

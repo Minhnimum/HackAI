@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lecture Live</title>
+  </head>
+  <body>
+    <!--
+      This is the only HTML Vite needs. The React app mounts itself into
+      <div id="root"> — everything else (panels, header, transcript) is
+      created dynamically by React components in src/App.tsx and its children.
+
+      Vite replaces the <script> tag below with the compiled JS bundle when
+      you run `npm run build`. During development, it serves src/main.tsx
+      directly with Hot Module Replacement.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

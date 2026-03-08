@@ -1,0 +1,34 @@
+/* TranscriptSegment.module.css — One committed or in-progress speech segment */
+
+/* Base segment — a clean card on the dark sidebar.
+   The left border acts as the primary visual indicator; the background
+   gives it separation from the panel body without feeling boxy. */
+.segment {
+  border-left: 2px solid #1e2235;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 0 8px 8px 0;
+  background: #0f1220;
+  color: #8893ae;
+  transition: border-color 0.5s ease, background 0.5s ease, color 0.5s ease;
+  font-size: 0.875rem;
+  line-height: 1.75;
+}
+
+/* Newly arrived segment — indigo accent that fades back over 3 seconds */
+.segment.new {
+  border-color: #6366f1;
+  background: #141730;
+  color: #c7cef5;
+  /* Subtle indigo glow on the left to draw the eye to new content */
+  box-shadow: -1px 0 8px rgba(99, 102, 241, 0.25);
+}
+
+/* In-progress partial — clearly secondary, not final */
+.segment.partial {
+  border-color: #1a1d2e;
+  background: transparent;
+  color: #2d3350;
+  font-style: italic;
+  box-shadow: none;
+}

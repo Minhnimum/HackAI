@@ -259,6 +259,69 @@ def analyze_whiteboard(
 
 
 # ---------------------------------------------------------------------------
+# Chat Q&A
+# ---------------------------------------------------------------------------
+
+# System prompt that tells Gemini to act as a teaching assistant grounded
+# only in what was actually covered during this lecture session. Keeping the
+# model "in scope" prevents it from hallucinating external knowledge that
+# contradicts what the professor said on the board or in speech.
+CHAT_SYSTEM_PROMPT = (
+    "You are EchoBoard, a helpful teaching assistant for a live lecture session. "
+    "A student has asked a question. "
+    "You have access to a chronological log of what has happened in the lecture so far: "
+    "the text the professor spoke (SPEECH entries) and the state of the whiteboard at key moments (WHITEBOARD entries). "
+    "Answer the question using your general knowledge. "
+    "If the lecture log contains relevant context — for example, the professor's specific example, "
+    "notation, or phrasing — incorporate that into your answer so it connects to what was taught in class. "
+    "Be concise — 2–4 sentences is ideal."
+)
+
+
+def answer_question(gemini_client: genai.Client, context: str, question: str) -> str:
+    """
+    Ask Gemini a question grounded in the lecture context log.
+
+    The function builds a single prompt that includes:
+      1. A system instruction (CHAT_SYSTEM_PROMPT) defining EchoBoard's role
+      2. The full chronological lecture context (SPEECH + WHITEBOARD events)
+      3. The student's question
+
+    This is a pure text-to-text Gemini call — no image is involved.
+
+    Args:
+        gemini_client: An authenticated genai.Client instance (from server.py startup).
+        context:       The formatted lecture event log, built by _build_context()
+                       in server.py. Each line is one timestamped speech or board event.
+        question:      The student's question, as a plain string.
+
+    Returns:
+        Gemini's answer as a plain string. Returns an error message string
+        if the response is empty or the API call fails.
+    """
+    # Combine the system instruction, the lecture context, and the question
+    # into one prompt. We separate sections with clear headings so Gemini can
+    # reliably parse which part is the context and which is the question.
+    prompt = (
+        f"{CHAT_SYSTEM_PROMPT}\n\n"
+        "--- LECTURE CONTEXT ---\n"
+        f"{context}\n\n"
+        "--- STUDENT QUESTION ---\n"
+        f"{question}"
+    )
+
+    response = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[prompt],
+    )
+
+    if not response.text:
+        return "I was unable to generate an answer. Please try rephrasing your question."
+
+    return response.text.strip()
+
+
+# ---------------------------------------------------------------------------
 # Audio Transcription
 # ---------------------------------------------------------------------------
 
