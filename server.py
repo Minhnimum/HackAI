@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     # daemon=True means these threads automatically die when the main program
     # exits — we don't need to manually stop them.
     start_camera_loop(on_frame)
-    start_streaming_audio_loop(on_transcript_text)
+    start_streaming_audio_loop(on_transcript_text, on_partial_text)
 
     logger.info("Lecture Capture System started. Open http://localhost:8000")
 
@@ -179,6 +179,7 @@ gemini_client: genai.Client | None = None
 # A reference to the main asyncio event loop. Background threads need this
 # to safely schedule async functions (like broadcast) from non-async code.
 _main_loop: asyncio.AbstractEventLoop | None = None
+
 
 # ---------------------------------------------------------------------------
 # WebSocket broadcast
@@ -248,43 +249,69 @@ def broadcast_sync(message: dict) -> None:
 
 def on_frame(frame: np.ndarray) -> None:
     """
-    Called by the camera loop every 5 seconds with a new camera frame.
+    Called by the camera loop with each new camera frame.
 
-    Sends the frame + current notes to Gemini, which returns an intelligently
-    merged update: new content added, changed content updated, blocked content
-    preserved. Broadcasts the result if anything changed.
+    Sends the frame + current notes to Gemini, which returns the complete
+    current state of the board. Gemini handles all add/update/delete logic:
+    - New content is added as new cells
+    - Changed content is updated in-place
+    - Erased content (clearly visible empty area) is omitted
+    - Content behind a person/obstruction is preserved
 
     Args:
         frame: A numpy array (height × width × 3 BGR pixels) from OpenCV.
     """
-    global whiteboard_notes  # We need to modify this module-level variable.
+    global whiteboard_notes
 
     logger.info("Processing whiteboard frame...")
 
     try:
-        # analyze_whiteboard() performs an AI-assisted merge: it compares the
-        # current camera frame against the existing notes and returns an updated
-        # version that preserves blocked content, updates changed content, and
-        # adds new content. Gemini does the diffing — we just pass it both.
         updated_notes = analyze_whiteboard(gemini_client, frame, whiteboard_notes)
     except Exception:
-        # Log the full error with stack trace but keep the server running.
-        # One failed Gemini call should not crash the whole session.
         logger.exception("Gemini Vision call failed")
         return
 
-    if updated_notes != whiteboard_notes:
-        # Gemini detected a change — replace the notes with the merged result.
-        whiteboard_notes = updated_notes
+    # Parse Gemini's response and the existing grid.
+    try:
+        current        = json.loads(whiteboard_notes) if whiteboard_notes else {}
+        proposed       = json.loads(updated_notes)    if updated_notes   else {}
+        current_cells  = current.get("cells",   [])
+        proposed_cells = proposed.get("cells",   [])
+        # Always use Gemini's latest column count — it may rearrange the layout.
+        columns        = proposed.get("columns", current.get("columns", 3))
+    except (json.JSONDecodeError, AttributeError):
+        return
 
+    # Trust Gemini's output as the authoritative current state of the board.
+    # The prompt instructs Gemini to:
+    #   - Include all visible content (additions + updates)
+    #   - Omit content that was clearly erased from an unobstructed area (deletions)
+    #   - Preserve cells that might be hidden behind a person or obstruction
+    # So we use proposed_cells directly — no union merge needed.
+    final_notes = json.dumps({"columns": columns, "cells": proposed_cells})
+
+    if final_notes != whiteboard_notes:
+        whiteboard_notes = final_notes
         broadcast_sync({
             "type": "whiteboard",
             "delta": "",
             "full": whiteboard_notes,
         })
-        logger.info("Whiteboard updated (%d chars total)", len(whiteboard_notes))
+        logger.info("Whiteboard updated (%d cells)", len(proposed_cells))
     else:
         logger.info("Whiteboard unchanged — no broadcast needed")
+
+
+def on_partial_text(text: str) -> None:
+    """
+    Called continuously while the professor is speaking — ElevenLabs' best
+    guess at the current words before the sentence is finished. Broadcast as
+    a separate message type so the browser can show it as in-progress text.
+    """
+    broadcast_sync({
+        "type": "transcript_partial",
+        "text": text,
+    })
 
 
 def on_transcript_text(text: str) -> None:

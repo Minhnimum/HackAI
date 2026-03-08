@@ -28,7 +28,7 @@ JPEG_QUALITY = 100
 # (smaller = faster API upload) and image clarity (higher = Gemini reads text better).
 # Below ~70 the compression artifacts can make handwritten text hard to read.
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 # The specific Gemini model to use for vision. "gemini-2.5-flash" is Google's
 # best price-to-performance model as of 2026. It handles images + text prompts
 # in a single call and returns a text response.
@@ -140,24 +140,39 @@ def analyze_whiteboard(
         grid_section = "CURRENT GRID: (none yet — this is the first capture)\n\n"
 
     prompt = (
-        "You are capturing a live whiteboard lecture. Your job is to maintain a "
-        "2D spatial grid of the whiteboard content so students see the same layout "
-        "the professor wrote.\n\n"
+        "Scan this whiteboard image and return a JSON grid representing the CURRENT state of the board.\n\n"
         + grid_section
-        + "Look at the whiteboard image and return an UPDATED JSON grid.\n\n"
-        "GRID SYSTEM:\n"
-        "- The board has up to 3 columns: col 1 = left third, col 2 = center third, "
-        "col 3 = right third.\n"
-        "- Rows go top to bottom starting at row 1. Use as many rows as needed.\n"
-        "- Use colSpan (1, 2, or 3) when content spans multiple column zones. "
-        "A full-width title gets colSpan 3. Content spanning left+center gets colSpan 2.\n\n"
-        "MERGE RULES:\n"
-        "1. ADD new content visible on the board that is not yet in the grid.\n"
-        "2. UPDATE cells whose content changed "
-        "(e.g., '5 + 3' is now '5 + 3 = 8' — edit that cell in-place).\n"
-        "3. PRESERVE cells not currently visible — the professor may be blocking them.\n"
-        "4. REMOVE cells only if you can clearly see the content was erased "
-        "(clean whiteboard where it was, not just someone standing in front).\n\n"
+        + "⚠ RULE 1 — NEVER MISS NEW CONTENT:\n"
+        "If you see ANY text or writing not already in the current grid, you MUST add it. "
+        "Missing new content is the worst possible failure. When in doubt, add it.\n\n"
+        "⚠ RULE 2 — DELETE ERASED CONTENT (when you have a clear view):\n"
+        "Your output is the authoritative state of the board. If a cell from the current "
+        "grid is no longer visible AND you have a clear, unobstructed view of that area "
+        "of the board, do NOT include that cell — the professor erased it.\n"
+        "EXCEPTION: If a person or object is physically blocking part of the board, you "
+        "cannot confirm what is behind them. For any cells that might be hidden behind "
+        "an obstruction, include them in your output unchanged — do not delete them.\n\n"
+        "SPATIAL GRID RULES — this is the most important section:\n"
+        "The board is divided into a grid. You must map each piece of content to the\n"
+        "grid cell that matches its PHYSICAL LOCATION on the board.\n\n"
+        "COLUMNS (left ↔ right):\n"
+        "- First decide how many columns fit the layout (1–6). Set this as 'columns'.\n"
+        "- Divide the board width into that many equal vertical strips.\n"
+        "- Content in the LEFTMOST strip → col 1. Next strip → col 2. And so on.\n"
+        "- Two pieces of content side-by-side on the board MUST have different col values.\n"
+        "- Two pieces of content stacked vertically (one above the other) MUST have the SAME col value.\n\n"
+        "ROWS (top ↔ bottom):\n"
+        "- Row 1 is the TOP of the board. Higher row numbers are lower on the board.\n"
+        "- Two pieces of content at the same height on the board MUST have the same row value.\n"
+        "- Content that is physically ABOVE other content MUST have a lower row number.\n"
+        "- Example: a formula written above a label → formula gets row 1, label gets row 2,\n"
+        "  and both get the same col (the column matching their horizontal position).\n\n"
+        "colSpan: use when a single piece of content physically spans multiple column zones.\n\n"
+        "WHAT TO RETURN:\n"
+        "1. All text currently visible on the board.\n"
+        "2. Cells behind a person/obstruction: copy them from the current grid unchanged.\n"
+        "3. Cells clearly erased from an unobstructed area: omit them entirely.\n"
+        "4. Updated content (e.g., '5+3' became '5+3=8'): include the updated version.\n\n"
         "TRANSCRIPTION RULE — stenographer, not narrator:\n"
         "- Output content exactly as written. Never describe or narrate.\n"
         "- WRONG: 'There appears to be an equation: 5 + 3'\n"
@@ -169,9 +184,10 @@ def analyze_whiteboard(
         "- Convert ALL math to LaTeX: inline $...$, display $$...$$\n"
         "- Use only $ and $$ delimiters — not \\( \\) or \\[ \\]\n\n"
         "OUTPUT: Return ONLY valid JSON — no explanation, no markdown fences.\n"
-        "Schema: {\"cells\": [{\"row\": int, \"col\": int, \"colSpan\": int, \"content\": str}]}\n"
-        "colSpan is optional and defaults to 1.\n"
-        "If the board is blank and there are no prior cells: {\"cells\": []}"
+        "Schema: {\"columns\": int, \"cells\": [{\"row\": int, \"col\": int, \"colSpan\": int, \"content\": str}]}\n"
+        "columns: total number of grid columns you chose (1–6). Required.\n"
+        "colSpan: optional, defaults to 1.\n"
+        "If the board is completely blank with no writing: {\"columns\": 1, \"cells\": []}"
     )
 
     # Step 3: Wrap the JPEG bytes in a types.Part so Gemini receives the image.
@@ -204,6 +220,10 @@ def analyze_whiteboard(
         parsed = json.loads(raw)
         if "cells" not in parsed or not isinstance(parsed["cells"], list):
             return current_notes
+        # Default columns to 3 if Gemini omitted it.
+        if "columns" not in parsed or not isinstance(parsed["columns"], int):
+            parsed["columns"] = 3
+            raw = json.dumps(parsed)
     except json.JSONDecodeError:
         return current_notes
 

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-CAMERA_INDEX = 0          # Built-in webcam; try 1 if this fails
+CAMERA_INDEX = 2          # External webcam (index confirmed via enumeration)
 FRAME_INTERVAL = 3.0      # Seconds between whiteboard captures
 
 SAMPLE_RATE = 16000       # Hz — ElevenLabs expects 16 kHz for speech transcription
@@ -52,41 +52,79 @@ ELEVENLABS_WS_URL = (
 # Camera
 # ---------------------------------------------------------------------------
 
-def grab_frame(camera_index: int = CAMERA_INDEX) -> Optional[np.ndarray]:
-    """Open the camera, grab one frame, release, and return it."""
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        logger.error("Could not open camera at index %d", camera_index)
-        return None
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        logger.error("Failed to read frame from camera")
-        return None
-    return frame
-
-
 def start_camera_loop(
     on_frame: Callable[[np.ndarray], None],
-    interval: float = FRAME_INTERVAL,
     camera_index: int = CAMERA_INDEX,
 ) -> threading.Thread:
     """
-    Start a background daemon thread that captures a frame every `interval`
-    seconds and calls `on_frame(frame)`.
+    Start a background daemon thread that captures frames as fast as possible
+    and calls on_frame(frame) for each one.
+
+    Why no sleep / interval?
+        The old design opened and closed the camera on every frame, then slept
+        for 3 seconds. Opening a USB camera on Windows takes 0.5–2 seconds each
+        time, making the real cycle 5–8 seconds even though we intended 3.
+
+        Now the camera is opened ONCE and kept open. cap.read() is fast (~16ms).
+        on_frame() calls Gemini, which takes 1–3 seconds — that IS the rate
+        limiter. As soon as Gemini responds we immediately read the next frame
+        and call Gemini again. This gives the fastest possible refresh rate
+        with no wasted waiting.
 
     Returns the thread (already started).
     """
     def _loop():
-        logger.info("Camera loop started (index=%d, interval=%.1fs)", camera_index, interval)
-        while True:
-            frame = grab_frame(camera_index)
-            if frame is not None:
+        # Helper that opens the camera and waits for it to warm up.
+        # On Windows, USB cameras often report isOpened()=True before the
+        # hardware is actually ready to deliver frames. The 2-second sleep
+        # gives the driver time to initialize so cap.read() succeeds.
+        def open_camera():
+            cap = cv2.VideoCapture(camera_index)
+            if not cap.isOpened():
+                return None
+            time.sleep(2.0)  # warmup — wait for USB camera to be ready
+            return cap
+
+        cap = open_camera()
+        if cap is None:
+            logger.error("Could not open camera at index %d", camera_index)
+            return
+
+        logger.info("Camera loop started (index=%d, continuous)", camera_index)
+        consecutive_failures = 0
+        MAX_FAILURES = 20  # ~2s of failures before we try re-opening
+
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    consecutive_failures += 1
+                    logger.warning(
+                        "Failed to read frame — retrying (%d/%d)",
+                        consecutive_failures, MAX_FAILURES,
+                    )
+                    time.sleep(0.1)
+
+                    # After too many consecutive failures, the camera may have
+                    # disconnected or stalled. Re-open it from scratch.
+                    if consecutive_failures >= MAX_FAILURES:
+                        logger.warning("Too many failures — re-opening camera")
+                        cap.release()
+                        cap = open_camera()
+                        if cap is None:
+                            logger.error("Could not re-open camera — giving up")
+                            return
+                        consecutive_failures = 0
+                    continue
+
+                # Successful read — reset the failure counter.
+                consecutive_failures = 0
                 try:
                     on_frame(frame)
                 except Exception:
                     logger.exception("Error in on_frame callback")
-            time.sleep(interval)
+        finally:
+            cap.release()
 
     t = threading.Thread(target=_loop, daemon=True, name="camera-loop")
     t.start()
@@ -99,6 +137,7 @@ def start_camera_loop(
 
 def start_streaming_audio_loop(
     on_transcript: Callable[[str], None],
+    on_partial: Callable[[str], None] = lambda _: None,
     sample_rate: int = SAMPLE_RATE,
 ) -> threading.Thread:
     """
@@ -188,16 +227,20 @@ def start_streaming_audio_loop(
             async def receiver() -> None:
                 """
                 Listen for messages from ElevenLabs.
-                We only act on committed_transcript — the final, stable text for
-                a speech segment after VAD has determined the speaker paused.
-                partial_transcript messages (interim guesses) are ignored.
+                - partial_transcript: ElevenLabs' best guess as you speak — sent
+                  continuously while speech is detected. We forward these immediately
+                  so the UI can show in-progress text in real time.
+                - committed_transcript: The final, stable result after VAD detects
+                  a pause. This replaces the partial text in the UI.
                 """
                 async for raw in ws:
                     data = json.loads(raw)
-                    if data.get("message_type") == "committed_transcript":
-                        text = data.get("text", "").strip()
-                        if text:
-                            on_transcript(text)
+                    msg_type = data.get("message_type")
+                    text = data.get("text", "").strip()
+                    if msg_type == "partial_transcript" and text:
+                        on_partial(text)
+                    elif msg_type == "committed_transcript" and text:
+                        on_transcript(text)
 
             # Run sender and receiver concurrently. gather() runs both coroutines
             # in the same event loop and returns when either one finishes (or raises).

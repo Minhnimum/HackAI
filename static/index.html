@@ -131,11 +131,10 @@
     }
 
     /* CSS grid that mirrors the whiteboard's 2D layout.
-       3 equal columns match the left / center / right thirds of the board.
+       Column count is set dynamically from the JSON via inline style.
        Each cell is placed with grid-row and grid-column set from the JSON. */
     .whiteboard-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
       gap: 12px 20px;        /* row-gap col-gap */
       align-items: start;    /* cells don't stretch to fill row height */
       width: 100%;
@@ -177,6 +176,15 @@
     .transcript-segment.new {
       border-color: #6366f1;
       background: #1a1d2e;
+    }
+
+    /* Partial (in-progress) transcript segment — shown while the professor is
+       still speaking. Dimmed and italic to distinguish from committed text. */
+    .transcript-segment.partial {
+      border-color: #374151;
+      background: #0f1117;
+      color: #4b5563;
+      font-style: italic;
     }
 
     #empty-transcript {
@@ -272,6 +280,8 @@
         handleWhiteboard(msg);
       } else if (msg.type === 'transcript') {
         handleTranscript(msg);
+      } else if (msg.type === 'transcript_partial') {
+        handlePartial(msg.text);
       }
     });
   }
@@ -334,7 +344,8 @@
       return;
     }
 
-    const cells = parsed.cells;
+    const cells   = parsed.cells;
+    const columns = parsed.columns || 3;
     if (!Array.isArray(cells)) return;
 
     // Hide the "Waiting…" placeholder once we have real content.
@@ -345,6 +356,8 @@
     // avoids the complexity of diffing the previous DOM state.
     const grid = document.createElement('div');
     grid.className = 'whiteboard-grid';
+    // Apply Gemini's chosen column count dynamically.
+    grid.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
 
     cells.forEach(({ row, col, colSpan = 1, content }) => {
       const cell = document.createElement('div');
@@ -390,12 +403,32 @@
     }
   }
 
+  // Holds the DOM element for the current in-progress partial segment.
+  // There is only ever one at a time — it gets replaced on every partial
+  // update and removed when the committed transcript arrives.
+  let partialSegment = null;
+
+  function handlePartial(text) {
+    emptyTranscript.style.display = 'none';
+    if (!partialSegment) {
+      partialSegment = document.createElement('div');
+      partialSegment.className = 'transcript-segment partial';
+      transcriptContent.appendChild(partialSegment);
+    }
+    partialSegment.textContent = text;
+    transcriptBody.scrollTop = transcriptBody.scrollHeight;
+  }
+
   function appendSegment(text, isNew) {
+    // Remove the partial segment — the committed text replaces it.
+    if (partialSegment) {
+      partialSegment.remove();
+      partialSegment = null;
+    }
     const div = document.createElement('div');
     div.className = 'transcript-segment' + (isNew ? ' new' : '');
     div.textContent = text;
     transcriptContent.appendChild(div);
-    // Remove "new" highlight after a moment
     if (isNew) {
       setTimeout(() => div.classList.remove('new'), 3000);
     }
